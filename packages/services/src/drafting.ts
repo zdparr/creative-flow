@@ -5,11 +5,14 @@ import {
   GateError,
   NotFoundError,
   type NovelizerEvent,
+  type Waiver,
   keyDialogue,
   normalizeCard,
   openBlockers,
+  proseBlocks,
   ruleIssues,
   runCohesionCritic,
+  runFixer,
   runNovelizer,
   draftParagraphs,
   wordCount,
@@ -205,6 +208,7 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
     ...rules.map((i, n) => ({ ...i, id: `r${n + 1}` })),
     ...out.issues.map((i, n) => ({ ...i, id: `c${n + 1}`, source: 'critic' as const })),
   ];
+  const previous = await ctx.repos.cohesion.latestForChapter(chapter.id);
   const report = await ctx.repos.cohesion.create({
     projectId: project.id,
     chapterId: chapter.id,
@@ -216,10 +220,27 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
     checkpointsMet: out.checkpointsMet,
     jobId,
   });
+  // A re-check keeps the author's waivers for issues it finds again.
+  const carried = carryWaivers(previous, issues);
+  if (carried.length) await ctx.repos.cohesion.setWaived(report.id, carried);
   if (chapter.status === 'drafting') {
     await ctx.repos.chapters.transition(chapter.id, 'drafting', 'review');
   }
   return report.id;
+}
+
+/** Waivers from a previous report whose issue (same category and description) is found again. */
+function carryWaivers(
+  previous: { issues: CohesionIssue[]; waived: Waiver[] } | null,
+  issues: CohesionIssue[],
+): Waiver[] {
+  if (!previous) return [];
+  const key = (i: CohesionIssue) => `${i.category}|${i.description.trim().toLowerCase()}`;
+  return previous.waived.flatMap((w) => {
+    const old = previous.issues.find((i) => i.id === w.issueId);
+    const again = old && issues.find((i) => key(i) === key(old));
+    return again ? [{ ...w, issueId: again.id }] : [];
+  });
 }
 
 // ---------- review ----------
@@ -367,6 +388,105 @@ export async function waiveIssue(
     ...report.waived,
     { issueId, reason: reason.trim(), at: new Date().toISOString() },
   ]);
+}
+
+// ---------- AI fixes ----------
+
+export interface FixProposal {
+  issueId: string;
+  draftVersion: number;
+  explanation: string;
+  edits: { paragraph: number; before: string; after: string }[];
+}
+
+/** The current draft and its report, which must match for an issue to be fixed. */
+async function currentIssue(ctx: ServiceContext, chapterId: string, issueId: string) {
+  const chapter = await ctx.repos.chapters.get(chapterId);
+  if (!chapter) throw new NotFoundError('Chapter');
+  assertReviewable(chapter);
+  const [draft, report] = await Promise.all([
+    ctx.repos.drafts.current(chapterId),
+    ctx.repos.cohesion.latestForChapter(chapterId),
+  ]);
+  if (!draft || !report || report.draftId !== draft.id) {
+    throw new ConflictError('Check the current draft before fixing its issues');
+  }
+  const issue = report.issues.find((i) => i.id === issueId);
+  if (!issue) throw new NotFoundError('Issue');
+  return { chapter, draft, issue };
+}
+
+/** Asks the fixer for revised paragraphs that resolve one issue. Nothing changes until approved. */
+export async function proposeFix(
+  ctx: ServiceContext,
+  chapterId: string,
+  issueId: string,
+): Promise<FixProposal> {
+  const { chapter, draft, issue } = await currentIssue(ctx, chapterId, issueId);
+  const { bible } = await chapterBasics(ctx, chapterId);
+  const paragraphs = draftParagraphs(draft.prose);
+  const out = await runFixer(ctx.agentContext(chapter.projectId, { chapterId }), {
+    bible,
+    paragraphs,
+    issue,
+  });
+  return {
+    issueId,
+    draftVersion: draft.version,
+    explanation: out.explanation,
+    edits: out.edits.map((e) => ({
+      paragraph: e.paragraph,
+      before: paragraphs[e.paragraph - 1]!,
+      after: e.text,
+    })),
+  };
+}
+
+/** Replaces the nth paragraph (1-based, scene breaks not counted), keeping the prose's shape. */
+export function replaceParagraphs(prose: string, edits: Map<number, string>): string {
+  let n = 0;
+  return proseBlocks(prose)
+    .map((b) => {
+      if (b.kind === 'break') return '#';
+      n += 1;
+      return edits.get(n) ?? b.text;
+    })
+    .join('\n\n');
+}
+
+/**
+ * The author approves a fix (possibly after editing it): the draft gets a new version with
+ * those paragraphs replaced, and the cohesion check re-runs on it.
+ */
+export async function applyFix(
+  ctx: ServiceContext,
+  chapterId: string,
+  issueId: string,
+  approved: { draftVersion: number; edits: { paragraph: number; text: string }[] },
+) {
+  const { chapter, draft, issue } = await currentIssue(ctx, chapterId, issueId);
+  if (approved.draftVersion !== draft.version) {
+    throw new ConflictError('The draft changed after this fix was proposed; ask for a new one');
+  }
+  const count = draftParagraphs(draft.prose).length;
+  const edits = new Map<number, string>();
+  for (const e of approved.edits) {
+    const text = e.text.replace(/\s*\n\s*/g, ' ').trim();
+    if (e.paragraph < 1 || e.paragraph > count) throw new GateError(`No paragraph ${e.paragraph}`);
+    if (!text) throw new GateError(`Paragraph ${e.paragraph} cannot be empty`);
+    edits.set(e.paragraph, text);
+  }
+  if (edits.size === 0) throw new GateError('The fix changes nothing');
+  const prose = replaceParagraphs(draft.prose, edits);
+  const next = await ctx.repos.drafts.create({
+    projectId: chapter.projectId,
+    chapterId,
+    prose,
+    wordCount: wordCount(prose),
+    notes: `Fix: ${issue.description}`.slice(0, 200),
+    jobId: null,
+  });
+  await requestCohesion(ctx, chapter, next.id);
 }
 
 // ---------- lock ----------

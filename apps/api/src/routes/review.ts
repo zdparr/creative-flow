@@ -1,10 +1,12 @@
 import { NotFoundError } from '@storyforge/core';
 import {
+  applyFix,
   editDraft,
   getDraftVersion,
   getPlayState,
   getReview,
   lockChapter,
+  proposeFix,
   recheckDraft,
   regenerateDraft,
   resolveDrift,
@@ -20,6 +22,10 @@ const proseBody = z.object({ prose: z.string() });
 const notesBody = z.object({ notes: z.string() });
 const waiveBody = z.object({ reason: z.string() });
 const driftBody = z.object({ resolution: z.enum(['steer', 'adopt']) });
+const applyFixBody = z.object({
+  draftVersion: z.number().int(),
+  edits: z.array(z.object({ paragraph: z.number().int(), text: z.string() })),
+});
 
 type ChapterParams = { Params: { id: string } };
 
@@ -69,6 +75,23 @@ export const reviewRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
     async (req) => {
       const chapter = await loadChapter(req);
       await waiveIssue(services, chapter.id, req.params.issueId, waiveBody.parse(req.body).reason);
+      return getReview(services, chapter.id);
+    },
+  );
+
+  app.post<{ Params: { id: string; issueId: string } }>(
+    '/chapters/:id/issues/:issueId/fix',
+    async (req) => {
+      const chapter = await loadChapter(req);
+      return proposeFix(services, chapter.id, req.params.issueId);
+    },
+  );
+
+  app.post<{ Params: { id: string; issueId: string } }>(
+    '/chapters/:id/issues/:issueId/fix/apply',
+    async (req) => {
+      const chapter = await loadChapter(req);
+      await applyFix(services, chapter.id, req.params.issueId, applyFixBody.parse(req.body));
       return getReview(services, chapter.id);
     },
   );

@@ -1,12 +1,14 @@
-import { GateError } from '@storyforge/core';
+import { ConflictError, GateError } from '@storyforge/core';
 import { sampleReplan, seedChapters } from '@storyforge/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { updatePromise } from './book.js';
 import { getCharacter } from './characters.js';
 import {
+  applyFix,
   editDraft,
   getReview,
   lockChapter,
+  proposeFix,
   recheckDraft,
   regenerateDraft,
   waiveIssue,
@@ -169,6 +171,58 @@ describe('Phase 5: novelize, cohesion, lock', () => {
       [1, 'warning'],
       [2, 'warning'],
     ]);
+  });
+
+  it('proposes an AI fix for an issue, applies it on approval, and re-checks', async () => {
+    const { ctx, llm } = kit;
+    const { chapters } = await seededProject(ctx);
+    await draftSeedChapter(kit, chapters[0]!.id, 1);
+    await lockChapter(ctx, chapters[0]!.id);
+    await runQueued(kit, 'outline.replan', sampleReplan);
+    const c2 = chapters[1]!.id;
+    await draftSeedChapter(kit, c2, 2);
+
+    // The author waives the promise blocker, then asks for a fix to the knowledge blocker.
+    await waiveIssue(ctx, c2, 'r1', 'Extending the promise later');
+    const fixed =
+      '"The light closes at the end of the month," he said, and set the order on the table.';
+    llm.push({
+      edits: [{ paragraph: 2, text: fixed }],
+      explanation: 'Tomas no longer mentions the letters.',
+    });
+    const proposal = await proposeFix(ctx, c2, 'c1');
+    expect(proposal).toMatchObject({
+      draftVersion: 1,
+      edits: [{ paragraph: 2, after: fixed }],
+    });
+    expect(proposal.edits[0]!.before).toContain('letters to your sister');
+    const prompt = llm.requests.at(-1)!.messages[0]!.content as string;
+    expect(prompt).toContain('Tomas mentions the letters to Isla');
+    // Nothing changes until the author approves.
+    expect((await getReview(ctx, c2)).draft?.version).toBe(1);
+
+    // The author tweaks the wording, approves, and the draft and report move on.
+    await applyFix(ctx, c2, 'c1', {
+      draftVersion: 1,
+      edits: [{ paragraph: 2, text: `${fixed} He did not sit.` }],
+    });
+    let review = await getReview(ctx, c2);
+    expect(review.draft?.version).toBe(2);
+    expect(review.paragraphs[0]).toBe(seedChapters[2].prose.split('\n\n')[0]);
+    expect(review.paragraphs[1]).toBe(`${fixed} He did not sit.`);
+    expect(review.job).toMatchObject({ type: 'chapter.cohesion', status: 'queued' });
+    await expect(
+      applyFix(ctx, c2, 'c1', { draftVersion: 1, edits: [{ paragraph: 2, text: 'x' }] }),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    // The re-check no longer finds the knowledge problem and keeps the promise waiver.
+    await runQueued(kit, 'chapter.cohesion', { ...seedChapters[2].critic, issues: [] });
+    review = await getReview(ctx, c2);
+    expect(review.report?.issues.map((i) => i.category)).toEqual(['promise']);
+    expect(review.report?.waived).toMatchObject([
+      { issueId: 'r1', reason: 'Extending the promise later' },
+    ]);
+    expect(review.canLock).toBe(true);
   });
 
   it('supports inline edits, re-checks, regeneration with notes, waivers, and return to play', async () => {

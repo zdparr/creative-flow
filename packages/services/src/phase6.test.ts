@@ -1,4 +1,4 @@
-import { ConflictError, type DriftNotice, GateError } from '@storyforge/core';
+import { ConflictError, type DriftNotice } from '@storyforge/core';
 import {
   sampleOpening,
   sampleOpeningExtraction,
@@ -256,7 +256,9 @@ describe('Phase 6: unlock', () => {
     let review3 = await getReview(ctx, chapters[2]!.id);
     expect(review3.chapter.status).toBe('needs_recheck');
     expect(review3.report?.current).toBe(true);
-    await expect(lockChapter(ctx, chapters[2]!.id)).rejects.toBeInstanceOf(GateError);
+    // Waivers for issues the re-check finds again carry over.
+    expect(review3.report?.waived.map((w) => w.reason)).toContain('Accepted for the test book');
+    expect(review3.gates.openBlockers).toBe(0);
 
     // Re-locking chapter 2 does not duplicate its facts; then chapter 3 is confirmed.
     await waiveAndLock(kit, chapters[1]!.id);

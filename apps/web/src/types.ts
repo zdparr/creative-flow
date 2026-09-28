@@ -280,3 +280,10 @@ export interface BookView {
   canAssemble: boolean;
   canExport: boolean;
 }
+
+export interface FixProposal {
+  issueId: string;
+  draftVersion: number;
+  explanation: string;
+  edits: { paragraph: number; before: string; after: string }[];
+}

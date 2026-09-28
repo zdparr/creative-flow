@@ -2,26 +2,126 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { ErrorNote, Problems, TextField, Working, humanize } from '../components.js';
 import { navigate } from '../router.js';
-import type { CohesionIssue, ReviewView } from '../types.js';
+import type { CohesionIssue, FixProposal, ReviewView } from '../types.js';
 
 const SEVERITY_ORDER = { blocker: 0, warning: 1, note: 2 } as const;
+const SCENE_BREAK = /^\s*(#|\*\s*\*\s*\*)\s*$/;
+
+/** Replaces the nth paragraph (1-based, scene breaks not counted) in the prose. */
+function replaceParagraph(prose: string, n: number, text: string): string {
+  let count = 0;
+  return prose
+    .replace(/\r\n/g, '\n')
+    .split(/\n\s*\n/)
+    .filter((b) => b.trim())
+    .map((block) => {
+      if (SCENE_BREAK.test(block)) return block.trim();
+      count += 1;
+      return count === n ? text.trim() : block.trim();
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/** A revision note for the novelizer describing one issue. */
+const issueNote = (issue: CohesionIssue) =>
+  `${issue.paragraph > 0 ? `Paragraph ${issue.paragraph}: ` : ''}${issue.description} Fix: ${issue.suggestedFix}`;
+
+/** The AI's proposed rewrite of one issue, shown beside the original for the author to approve. */
+function FixPanel({
+  proposal,
+  busy,
+  onApprove,
+  onDiscard,
+}: {
+  proposal: FixProposal;
+  busy: boolean;
+  onApprove: (edits: { paragraph: number; text: string }[]) => void;
+  onDiscard: () => void;
+}) {
+  const [texts, setTexts] = useState(proposal.edits.map((e) => e.after));
+  return (
+    <div className="fix stack">
+      <p className="small-print">{proposal.explanation}</p>
+      {proposal.edits.map((e, i) => (
+        <div key={e.paragraph} className="stack">
+          <span className="muted small-print">¶{e.paragraph} now reads:</span>
+          <del className="small-print">{e.before}</del>
+          <label className="muted small-print" htmlFor={`fix-${proposal.issueId}-${e.paragraph}`}>
+            Proposed (you can edit it before approving):
+          </label>
+          <textarea
+            id={`fix-${proposal.issueId}-${e.paragraph}`}
+            rows={Math.max(4, Math.ceil(texts[i]!.length / 45))}
+            value={texts[i]}
+            onChange={(ev) => setTexts(texts.map((t, j) => (j === i ? ev.target.value : t)))}
+          />
+        </div>
+      ))}
+      <div className="toolbar">
+        <button
+          disabled={busy || texts.some((t) => !t.trim())}
+          onClick={() =>
+            onApprove(proposal.edits.map((e, i) => ({ paragraph: e.paragraph, text: texts[i]! })))
+          }
+        >
+          Approve fix
+        </button>
+        <button className="quiet" disabled={busy} onClick={onDiscard}>
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function IssueCard({
   issue,
   waiver,
   selected,
   canWaive,
+  canFix,
   onSelect,
   onWaive,
+  onEdit,
+  onAddNote,
+  onPropose,
+  onApply,
 }: {
   issue: CohesionIssue;
   waiver: { reason: string } | undefined;
   selected: boolean;
   canWaive: boolean;
+  canFix: boolean;
   onSelect: () => void;
   onWaive: (reason: string) => Promise<void>;
+  onEdit: () => void;
+  onAddNote: () => void;
+  onPropose: () => Promise<FixProposal | null>;
+  onApply: (proposal: FixProposal, edits: { paragraph: number; text: string }[]) => Promise<void>;
 }) {
   const [reason, setReason] = useState('');
+  const [proposal, setProposal] = useState<FixProposal | null>(null);
+  const [fixing, setFixing] = useState(false);
+
+  async function propose() {
+    setFixing(true);
+    try {
+      setProposal(await onPropose());
+    } finally {
+      setFixing(false);
+    }
+  }
+
+  async function apply(edits: { paragraph: number; text: string }[]) {
+    if (!proposal) return;
+    setFixing(true);
+    try {
+      await onApply(proposal, edits);
+    } finally {
+      setFixing(false);
+    }
+  }
   return (
     <li
       className={`issue ${issue.severity}${selected ? ' selected' : ''}${waiver ? ' waived' : ''}`}
@@ -41,7 +141,38 @@ function IssueCard({
       </div>
       <p>{issue.description}</p>
       <p className="muted small-print">Evidence: {issue.evidence}</p>
-      <p className="small-print">Fix: {issue.suggestedFix}</p>
+      <p className="small-print">Suggested fix: {issue.suggestedFix}</p>
+      {canFix && !waiver && !proposal && (
+        <div className="toolbar">
+          <button
+            disabled={fixing}
+            onClick={propose}
+            title="Have the AI rewrite the text to fix this"
+          >
+            {fixing ? 'Writing a fix…' : 'Suggest a fix'}
+          </button>
+          {issue.paragraph > 0 && (
+            <button className="quiet" onClick={onEdit} title="Rewrite this paragraph yourself">
+              Edit ¶{issue.paragraph}
+            </button>
+          )}
+          <button
+            className="quiet"
+            onClick={onAddNote}
+            title="Add this fix to the notes for the next AI revision"
+          >
+            Add to revision notes
+          </button>
+        </div>
+      )}
+      {proposal && canFix && (
+        <FixPanel
+          proposal={proposal}
+          busy={fixing}
+          onApprove={apply}
+          onDiscard={() => setProposal(null)}
+        />
+      )}
       {waiver ? (
         <p className="muted small-print">Waived: {waiver.reason}</p>
       ) : (
@@ -72,7 +203,9 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
   const [editing, setEditing] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [older, setOlder] = useState<{ version: number; prose: string } | null>(null);
+  const [editingPara, setEditingPara] = useState<{ n: number; text: string } | null>(null);
   const draftRef = useRef<HTMLDivElement>(null);
+  const notesRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -115,6 +248,37 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
       ?.querySelector(`[data-paragraph="${issue.paragraph}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
+
+  function editParagraph(n: number) {
+    if (!view) return;
+    setOlder(null);
+    setEditingPara({ n, text: view.paragraphs[n - 1] ?? '' });
+    setTimeout(
+      () =>
+        draftRef.current
+          ?.querySelector(`[data-paragraph="${n}"]`)
+          ?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+      0,
+    );
+  }
+
+  function addNote(issue: CohesionIssue) {
+    const note = issueNote(issue);
+    setNotes((current) =>
+      current.includes(note) ? current : `${current.trim()}\n- ${note}`.trim(),
+    );
+    notesRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  const saveParagraph = () =>
+    run(async () => {
+      if (!view?.draft || !editingPara) return;
+      const next = await api<ReviewView>('PATCH', `/chapters/${chapterId}/draft`, {
+        prose: replaceParagraph(view.draft.prose, editingPara.n, editingPara.text),
+      });
+      setEditingPara(null);
+      return next;
+    });
 
   if (!view) return <main className="shell">{error ? <ErrorNote error={error} /> : null}</main>;
 
@@ -165,7 +329,7 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
             )}
             {reviewable && !older && (
               <button className="quiet" disabled={busy} onClick={() => setEditing(draft.prose)}>
-                Edit
+                Edit whole chapter
               </button>
             )}
             {view.versions.length > 1 && (
@@ -223,27 +387,86 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
           </div>
         ) : draft ? (
           <article className="pane draft" ref={draftRef}>
-            {paragraphs.map((p, i) => (
-              <p
-                key={i}
-                data-paragraph={i + 1}
-                className={!older && selectedIssue?.paragraph === i + 1 ? 'highlight' : ''}
-              >
-                <span className="para-no" aria-hidden>
-                  {i + 1}
-                </span>
-                {p}
-              </p>
-            ))}
+            {paragraphs.map((p, i) =>
+              editingPara?.n === i + 1 ? (
+                <div key={i} data-paragraph={i + 1} className="para-edit stack">
+                  <textarea
+                    aria-label={`Paragraph ${i + 1}`}
+                    rows={Math.max(4, Math.ceil(editingPara.text.length / 70))}
+                    value={editingPara.text}
+                    autoFocus
+                    onChange={(e) => setEditingPara({ n: i + 1, text: e.target.value })}
+                  />
+                  <div className="toolbar">
+                    <button disabled={busy || !editingPara.text.trim()} onClick={saveParagraph}>
+                      Save paragraph
+                    </button>
+                    <button className="quiet" onClick={() => setEditingPara(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p
+                  key={i}
+                  data-paragraph={i + 1}
+                  className={`${!older && selectedIssue?.paragraph === i + 1 ? 'highlight' : ''}${reviewable && !older ? ' editable' : ''}`}
+                  title={reviewable && !older ? 'Click to edit this paragraph' : undefined}
+                  onClick={() => reviewable && !older && !editingPara && editParagraph(i + 1)}
+                >
+                  <span className="para-no" aria-hidden>
+                    {i + 1}
+                  </span>
+                  {p}
+                </p>
+              ),
+            )}
           </article>
         ) : (
-          !working && <p className="muted">No draft yet.</p>
+          !working && (
+            <div className="card stack">
+              <p>
+                {view.job?.status === 'failed'
+                  ? 'The draft could not be written. Try again, or return to play.'
+                  : 'This chapter has ended but its prose draft has not been written yet.'}
+              </p>
+              <div className="toolbar">
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(() => api('POST', `/chapters/${chapterId}/draft/regenerate`, { notes: '' }))
+                  }
+                >
+                  Write the draft
+                </button>
+                <button
+                  className="quiet"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      await api('POST', `/chapters/${chapterId}/reopen`);
+                      navigate(`/projects/${projectId}/play/${chapterId}`);
+                    })
+                  }
+                >
+                  Return to play
+                </button>
+              </div>
+            </div>
+          )
         )}
 
-        {(reviewable || (chapter.status === 'drafting' && !working)) && (
-          <div className="card stack">
+        {reviewable && !older && draft && (
+          <p className="muted small-print">
+            Click any paragraph to rewrite it yourself, or add issues to the revision notes below
+            and let the AI redraft the chapter. After changing the draft, check it again.
+          </p>
+        )}
+
+        {(reviewable || (chapter.status === 'drafting' && draft && !working)) && (
+          <div className="card stack" ref={notesRef}>
             <TextField
-              label="Regenerate with notes"
+              label="Revise with AI: notes for the next draft"
               multiline
               value={notes}
               onChange={setNotes}
@@ -263,11 +486,7 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
                   })
                 }
               >
-                {chapter.status !== 'drafting'
-                  ? 'Regenerate'
-                  : draft
-                    ? 'Draft again'
-                    : 'Write the draft'}
+                {chapter.status === 'drafting' ? 'Draft again' : 'Redraft with these notes'}
               </button>
               <button
                 className="quiet"
@@ -292,11 +511,11 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
           {!report && !working && <p className="muted">Not checked yet.</p>}
           {report && !report.current && (
             <div className="notice stack">
-              <p>The draft has changed since it was last checked.</p>
+              <p>The draft has changed since it was last checked. Check it again before locking.</p>
               {reviewable && (
                 <div>
                   <button
-                    className="quiet"
+                    className=""
                     disabled={busy || !!working}
                     onClick={() => run(() => api('POST', `/chapters/${chapterId}/draft/check`))}
                   >
@@ -315,7 +534,30 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
                 waiver={waiverOf(issue.id)}
                 selected={issue.id === selected}
                 canWaive={reviewable && report!.current}
+                canFix={reviewable && !!draft && report!.current}
                 onSelect={() => selectIssue(issue)}
+                onEdit={() => editParagraph(issue.paragraph)}
+                onAddNote={() => addNote(issue)}
+                onPropose={async () => {
+                  setError(null);
+                  try {
+                    return await api<FixProposal>(
+                      'POST',
+                      `/chapters/${chapterId}/issues/${issue.id}/fix`,
+                    );
+                  } catch (err) {
+                    setError(errorText(err));
+                    return null;
+                  }
+                }}
+                onApply={(proposal, edits) =>
+                  run(() =>
+                    api('POST', `/chapters/${chapterId}/issues/${issue.id}/fix/apply`, {
+                      draftVersion: proposal.draftVersion,
+                      edits,
+                    }),
+                  )
+                }
                 onWaive={(reason) =>
                   run(() =>
                     api('POST', `/chapters/${chapterId}/issues/${issue.id}/waive`, { reason }),

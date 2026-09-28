@@ -1,5 +1,6 @@
 export * from './agents/cardDrafter.js';
 export * from './agents/critic.js';
+export * from './agents/fixer.js';
 export * from './agents/interviewer.js';
 export * from './agents/novelizer.js';
 export * from './agents/outliner.js';

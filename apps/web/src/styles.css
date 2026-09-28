@@ -721,3 +721,26 @@ textarea.pane {
   width: 5em;
   padding: 4px 6px;
 }
+
+.draft p.editable {
+  cursor: text;
+}
+
+.draft p.editable:hover {
+  background: var(--accent-soft);
+  border-radius: 4px;
+}
+
+.para-edit {
+  margin: 0 0 1em;
+}
+
+.fix {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dotted var(--border);
+}
+
+.fix del {
+  color: var(--muted);
+}
