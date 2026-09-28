@@ -544,3 +544,180 @@ a.button.quiet {
   padding: 4px 10px;
   font-size: 0.9rem;
 }
+
+/* ---------- links as buttons ---------- */
+
+a.button {
+  display: inline-block;
+  font-size: 0.9rem;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+a.button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- drift notices ---------- */
+
+.drift {
+  margin: 0 0 1em;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.drift.resolved {
+  opacity: 0.7;
+}
+
+.drift .toolbar {
+  margin-top: 6px;
+}
+
+/* ---------- card tray ---------- */
+
+.tray {
+  display: grid;
+  gap: 8px;
+}
+
+.tray > li > button {
+  width: 100%;
+  text-align: left;
+}
+
+.versions li {
+  margin-bottom: 6px;
+}
+
+/* ---------- review ---------- */
+
+.draft p {
+  position: relative;
+  margin: 0 0 1em;
+  padding-left: 2.2em;
+}
+
+.draft p.highlight {
+  background: var(--accent-soft);
+  border-radius: 4px;
+}
+
+.para-no {
+  position: absolute;
+  left: 0;
+  width: 1.8em;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 2.3;
+  user-select: none;
+}
+
+textarea.pane {
+  font-family: inherit;
+}
+
+.issues {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.issue {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.issue.blocker {
+  border-color: var(--danger);
+}
+
+.issue.selected {
+  outline: 2px solid var(--accent);
+}
+
+.issue.waived {
+  opacity: 0.7;
+  border-color: var(--border);
+}
+
+.issue p {
+  margin: 6px 0 0;
+}
+
+/* ---------- re-plan diffs ---------- */
+
+.replan-item {
+  border-top: 1px dotted var(--border);
+  padding-top: 10px;
+}
+
+.diff {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.diff dt {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.diff dd {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  white-space: pre-line;
+}
+
+.diff del {
+  color: var(--muted);
+}
+
+.diff ins {
+  text-decoration: none;
+  background: var(--plant);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ---------- book ---------- */
+
+.book table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+}
+
+.book th,
+.book td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.book th {
+  color: var(--muted);
+  font-weight: normal;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+.narrow-input {
+  width: 5em;
+  padding: 4px 6px;
+}

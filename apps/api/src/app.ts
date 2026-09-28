@@ -6,9 +6,12 @@ import type { ServiceContext } from '@storyforge/services';
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import { errorHandler } from './errors.js';
 import { authRoutes } from './routes/auth.js';
+import { bookRoutes } from './routes/book.js';
+import { characterRoutes } from './routes/characters.js';
 import { healthRoutes } from './routes/health.js';
 import { playRoutes } from './routes/play.js';
 import { projectRoutes } from './routes/projects.js';
+import { reviewRoutes } from './routes/review.js';
 
 export interface AppDeps {
   env: Pick<WebEnv, 'AUTH_SECRET' | 'AUTH_ALLOWED_EMAIL' | 'AUTH_PASSWORD' | 'NODE_ENV'>;
@@ -30,6 +33,9 @@ export async function buildApp(deps: AppDeps) {
       await api.register(authRoutes, deps);
       await api.register(projectRoutes, deps);
       await api.register(playRoutes, deps);
+      await api.register(characterRoutes, deps);
+      await api.register(reviewRoutes, deps);
+      await api.register(bookRoutes, deps);
     },
     { prefix: '/api' },
   );

@@ -1,11 +1,18 @@
 import {
+  type BookIssue,
+  type CardContent,
   type ChapterPromises,
   type ChronicleExtraction,
+  type CohesionIssue,
+  type DriftDetails,
   type InterviewAnswer,
   type InterviewQuestion,
   type OutlineChapter,
+  type PlantedPromise,
+  type ReplanItem,
   type Spine,
   type StyleGuide,
+  type Waiver,
   type World,
   CHAPTER_STATUSES,
   CHARACTER_STATUSES,
@@ -51,6 +58,11 @@ export const exportFormat = pgEnum('export_format', EXPORT_FORMATS);
 
 /** Postgres int4range, kept as its text form ("[3,6)") until a phase needs richer handling. */
 const int4range = customType<{ data: string }>({ dataType: () => 'int4range' });
+// Drivers differ: postgres-js returns a Buffer, PGlite a Uint8Array.
+const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
+  dataType: () => 'bytea',
+  fromDriver: (value) => Buffer.from(value),
+});
 
 // ---------- shared columns ----------
 
@@ -248,6 +260,8 @@ export const chapterDrafts = pgTable(
     version: integer('version').notNull(),
     prose: text('prose').notNull(),
     wordCount: integer('word_count').notNull(),
+    // The author's notes when this version was a regeneration.
+    notes: text('notes'),
     jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
     isCurrent: boolean('is_current').notNull().default(false),
     ...timestamps(),
@@ -264,9 +278,18 @@ export const cohesionReports = pgTable('cohesion_reports', {
   draftId: uuid('draft_id')
     .notNull()
     .references(() => chapterDrafts.id, { onDelete: 'cascade' }),
-  issues: jsonb('issues').notNull(),
+  issues: jsonb('issues').$type<CohesionIssue[]>().notNull(),
   blockerCount: integer('blocker_count').notNull().default(0),
-  waived: jsonb('waived').notNull().default([]),
+  waived: jsonb('waived').$type<Waiver[]>().notNull().default([]),
+  // Proposals the lock commits: the chapter summary, promises paid, and arc checkpoints met.
+  summary: text('summary'),
+  paidPromiseIds: uuid('paid_promise_ids').array().notNull().default([]),
+  plantedPromises: jsonb('planted_promises').$type<PlantedPromise[]>().notNull().default([]),
+  checkpointsMet: jsonb('checkpoints_met')
+    .$type<{ character: string; chapter: number }[]>()
+    .notNull()
+    .default([]),
+  jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });
 
@@ -293,7 +316,9 @@ export const characterVersions = pgTable(
       .references(() => characters.id, { onDelete: 'cascade' }),
     version: integer('version').notNull(),
     effectiveChapter: integer('effective_chapter').notNull(),
-    card: jsonb('card').notNull(),
+    card: jsonb('card').$type<CardContent>().notNull(),
+    // Where this version came from: bible, drafted, author, checkpoint, drift.
+    source: text('source').notNull().default('drafted'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     ...timestamps(),
   },
@@ -356,6 +381,10 @@ export const driftEvents = pgTable('drift_events', {
   turnId: uuid('turn_id').references(() => playTurns.id, { onDelete: 'set null' }),
   kind: text('kind').notNull(),
   description: text('description').notNull(),
+  details: jsonb('details')
+    .$type<DriftDetails>()
+    .notNull()
+    .default({ beatId: null, factId: null, character: null, adoptText: '' }),
   resolution: driftResolution('resolution'),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   ...timestamps(),
@@ -367,7 +396,29 @@ export const snapshots = pgTable('snapshots', {
   chapterId: uuid('chapter_id')
     .notNull()
     .references((): AnyPgColumn => chapters.id, { onDelete: 'cascade' }),
-  payload: jsonb('payload').notNull(),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+  ...timestamps(),
+});
+
+// ---------- re-plan and book review ----------
+
+export const replanDiffs = pgTable('replan_diffs', {
+  id: id(),
+  projectId: projectId(),
+  // Proposed after this chapter locked; applies to later chapters only.
+  afterChapter: integer('after_chapter').notNull(),
+  items: jsonb('items').$type<ReplanItem[]>().notNull(),
+  jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  ...timestamps(),
+});
+
+export const bookReviews = pgTable('book_reviews', {
+  id: id(),
+  projectId: projectId(),
+  summary: text('summary').notNull(),
+  issues: jsonb('issues').$type<BookIssue[]>().notNull(),
+  jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });
 
@@ -413,6 +464,11 @@ export const exports = pgTable('exports', {
   id: id(),
   projectId: projectId(),
   format: exportFormat('format').notNull(),
-  s3Key: text('s3_key').notNull(),
+  fileName: text('file_name').notNull(),
+  byteSize: integer('byte_size').notNull(),
+  // Stored in S3 when configured; otherwise the file itself is kept here.
+  s3Key: text('s3_key'),
+  content: bytea('content'),
+  jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });

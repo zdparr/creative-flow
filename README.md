@@ -37,8 +37,12 @@ pnpm lint && pnpm typecheck && pnpm test
 
 Tests never call the live API: agents run against `FakeLlm` with recorded responses, and database tests use PGlite, so no local Postgres is needed.
 
+To check the cohesion critic itself against the seeded test book (three planted violations) with the live model, run `ANTHROPIC_API_KEY=... pnpm eval:cohesion`. It makes a few strong-tier calls.
+
 After changing `packages/db/src/schema.ts`, run `pnpm db:generate` and commit the new migration. CI fails if you forget.
 
 ## Deploy
 
-On Render: **New → Blueprint**, pick this repo, and fill in the `sync: false` values (`AUTH_ALLOWED_EMAIL`, `AUTH_PASSWORD`, `ANTHROPIC_API_KEY`, and later the S3 settings). Migrations run in the web service's pre-deploy step.
+On Render: **New → Blueprint**, pick this repo, and fill in the `sync: false` values (`AUTH_ALLOWED_EMAIL`, `AUTH_PASSWORD`, `ANTHROPIC_API_KEY`). Migrations run in the web service's pre-deploy step.
+
+Book exports are stored in Postgres unless `S3_BUCKET` is set, in which case they go to S3 (also set `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` in the `storyforge-shared` environment group, which both services use).

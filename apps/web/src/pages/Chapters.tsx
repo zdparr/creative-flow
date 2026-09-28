@@ -27,8 +27,9 @@ export function ChaptersScreen({ project }: { project: Project }) {
     <ol className="chapters">
       {chapters.map((c) => {
         const canOpen = openable(chapters, c);
+        const inPlay = c.status === 'planned' || c.status === 'playing';
         const label =
-          c.status === 'planned' ? 'Play' : c.status === 'playing' ? 'Continue' : 'Open';
+          c.status === 'planned' ? 'Play' : c.status === 'playing' ? 'Continue' : 'Review';
         return (
           <li key={c.id} className="card chapter">
             <div className="chapter-head">
@@ -36,6 +37,14 @@ export function ChaptersScreen({ project }: { project: Project }) {
               <strong>{c.title}</strong>
               <span className="badge">{humanize(c.status)}</span>
               <span className="reorder">
+                {c.status !== 'planned' && !inPlay && (
+                  <button
+                    className="quiet"
+                    onClick={() => navigate(`/projects/${project.id}/play/${c.id}`)}
+                  >
+                    Play log
+                  </button>
+                )}
                 {c.status === 'locked' && (
                   <a className="button quiet" href={`/api/chapters/${c.id}/download.docx`} download>
                     Download .docx
@@ -44,7 +53,9 @@ export function ChaptersScreen({ project }: { project: Project }) {
                 <button
                   disabled={!canOpen}
                   title={canOpen ? undefined : 'The previous chapter must be locked first'}
-                  onClick={() => navigate(`/projects/${project.id}/play/${c.id}`)}
+                  onClick={() =>
+                    navigate(`/projects/${project.id}/${inPlay ? 'play' : 'review'}/${c.id}`)
+                  }
                 >
                   {label}
                 </button>

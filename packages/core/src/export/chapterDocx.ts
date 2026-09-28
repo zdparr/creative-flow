@@ -23,28 +23,24 @@ export function proseBlocks(prose: string): ({ kind: 'para'; text: string } | { 
     );
 }
 
-/**
- * A finalized chapter as a Word document in standard manuscript format: Times New Roman 12pt,
- * double-spaced, one-inch margins, half-inch first-line indents (none after a heading or
- * scene break), and centered "#" scene breaks. Contains prose only, never play data.
- */
-export async function chapterToDocx(chapter: ChapterExport): Promise<Buffer> {
+/** A chapter's heading and prose as manuscript paragraphs. */
+export function chapterParagraphs(number: number, title: string, prose: string): Paragraph[] {
   const paragraphs: Paragraph[] = [
     new Paragraph({
       alignment: AlignmentType.CENTER,
       // Chapter openings start about a third of the way down the page.
       spacing: { before: 3 * INCH },
-      children: [new TextRun(`Chapter ${chapter.chapterNumber}`)],
+      children: [new TextRun(`Chapter ${number}`)],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { after: 480 },
-      children: [new TextRun(chapter.chapterTitle)],
+      children: [new TextRun(title)],
     }),
   ];
 
   let indent = false;
-  for (const block of proseBlocks(chapter.prose)) {
+  for (const block of proseBlocks(prose)) {
     if (block.kind === 'break') {
       paragraphs.push(
         new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun('#')] }),
@@ -60,9 +56,18 @@ export async function chapterToDocx(chapter: ChapterExport): Promise<Buffer> {
     );
     indent = true;
   }
+  return paragraphs;
+}
 
+const PAGE = { page: { margin: { top: INCH, right: INCH, bottom: INCH, left: INCH } } };
+
+/**
+ * Standard manuscript format: Times New Roman 12pt, double-spaced, one-inch margins. Each
+ * section starts on a new page.
+ */
+export function manuscriptDocument(title: string, sections: Paragraph[][]): Promise<Buffer> {
   const doc = new Document({
-    title: `${chapter.bookTitle}, Chapter ${chapter.chapterNumber}`,
+    title,
     creator: 'Story Forge',
     styles: {
       default: {
@@ -72,26 +77,35 @@ export async function chapterToDocx(chapter: ChapterExport): Promise<Buffer> {
         },
       },
     },
-    sections: [
-      {
-        properties: {
-          page: { margin: { top: INCH, right: INCH, bottom: INCH, left: INCH } },
-        },
-        children: paragraphs,
-      },
-    ],
+    sections: sections.map((children) => ({ properties: PAGE, children })),
   });
   return Packer.toBuffer(doc);
 }
 
-/** A safe download file name, e.g. "the-tide-letters-chapter-01.docx". */
-export function chapterFileName(bookTitle: string, chapterNumber: number): string {
-  const slug =
+/**
+ * A finalized chapter as a Word document in standard manuscript format, with half-inch
+ * first-line indents (none after a heading or scene break) and centered "#" scene breaks.
+ * Contains prose only, never play data.
+ */
+export function chapterToDocx(chapter: ChapterExport): Promise<Buffer> {
+  return manuscriptDocument(`${chapter.bookTitle}, Chapter ${chapter.chapterNumber}`, [
+    chapterParagraphs(chapter.chapterNumber, chapter.chapterTitle, chapter.prose),
+  ]);
+}
+
+/** A file-name-safe slug of the book title. */
+export function titleSlug(bookTitle: string): string {
+  return (
     bookTitle
       .toLowerCase()
       .normalize('NFKD')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'book';
-  return `${slug}-chapter-${String(chapterNumber).padStart(2, '0')}.docx`;
+      .slice(0, 60) || 'book'
+  );
+}
+
+/** A safe download file name, e.g. "the-tide-letters-chapter-01.docx". */
+export function chapterFileName(bookTitle: string, chapterNumber: number): string {
+  return `${titleSlug(bookTitle)}-chapter-${String(chapterNumber).padStart(2, '0')}.docx`;
 }

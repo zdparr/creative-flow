@@ -1,9 +1,7 @@
 import {
   type BeatStatus,
   type BibleContent,
-  type CharacterCard,
   ConflictError,
-  type ContextPromise,
   type ContextTurn,
   GateError,
   NotFoundError,
@@ -19,13 +17,17 @@ import {
 } from '@storyforge/core';
 import type { ChapterRow, CharacterRow, PlayTurn, Project } from '@storyforge/db';
 import { toBibleContent } from './bible.js';
+import { cardsForChapter, ensureCast, listCharacters, registerNewCharacter } from './characters.js';
 import type { ServiceContext } from './context.js';
+import { requestNovelize } from './drafting.js';
+import { recordDrift } from './drift.js';
+import { knowledgeItems, ledgerFacts, promisesForPlay, toPlan } from './state.js';
 
 /** Receives a turn as it happens; the API forwards these as server-sent events. */
 export interface PlaySink {
   text(delta: string): void;
   npc(name: string): void;
-  event(type: 'turn' | 'chronicle' | 'warning', data: unknown): void;
+  event(type: 'turn' | 'chronicle' | 'warning' | 'drift', data: unknown): void;
 }
 
 export const DIRECTOR_BUDGET_TOKENS = 60_000;
@@ -42,38 +44,6 @@ interface PlayData {
   characters: CharacterRow[];
   turns: PlayTurn[];
   beats: BeatStatus[];
-}
-
-function toPlan(
-  row: NonNullable<Awaited<ReturnType<ServiceContext['repos']['chapters']['plan']>>>,
-): OutlineChapter {
-  return {
-    number: row.number,
-    title: row.title,
-    purpose: row.purpose,
-    requiredBeats: row.requiredBeats,
-    arcsMoved: row.arcsMoved,
-    isAnchor: row.isAnchor,
-    anchorType: row.anchorType ?? null,
-    promises: row.promises,
-  };
-}
-
-/** Creates character records for the bible's cast the first time a chapter is played. */
-async function ensureCast(ctx: ServiceContext, projectId: string, bible: BibleContent) {
-  const existing = await ctx.repos.characters.list(projectId);
-  for (const member of bible.world.cast) {
-    if (ctx.repos.characters.findByName(existing, member.name)) continue;
-    existing.push(
-      await ctx.repos.characters.create({
-        projectId,
-        name: member.name,
-        tier: member.tier,
-        status: 'approved',
-      }),
-    );
-  }
-  return existing;
 }
 
 async function load(ctx: ServiceContext, chapterId: string): Promise<PlayData> {
@@ -104,11 +74,6 @@ async function load(ctx: ServiceContext, chapterId: string): Promise<PlayData> {
   };
 }
 
-function cardFor(c: CharacterRow, bible: BibleContent): CharacterCard {
-  const member = bible.world.cast.find((m) => m.name.toLowerCase() === c.name.toLowerCase());
-  return { id: c.id, name: c.name, tier: c.tier, card: member ?? {} };
-}
-
 const protagonistName = (bible: BibleContent) =>
   bible.world.cast.find((m) => m.role === 'protagonist')?.name ?? bible.styleGuide.povCharacter;
 
@@ -126,18 +91,6 @@ async function sceneCharacters(ctx: ServiceContext, data: PlayData) {
   return { ids: [...ids], locationId: chronicle.at(-1)?.locationId ?? null };
 }
 
-async function plannedPromises(ctx: ServiceContext, projectId: string): Promise<ContextPromise[]> {
-  const outline = await ctx.repos.outlines.latest(projectId);
-  return (outline?.chapters ?? []).flatMap((c) =>
-    c.promises.planted.map((p) => ({
-      description: p.description,
-      plantedChapter: c.number,
-      payoffChapter: p.payoffChapter,
-      entities: [],
-    })),
-  );
-}
-
 const toContextTurn = (t: PlayTurn): ContextTurn => ({
   role: t.role,
   inputKind: t.inputKind,
@@ -152,8 +105,17 @@ async function runTurn(
   interiority: string | null,
   sink: PlaySink,
 ) {
-  const agent = ctx.agentContext(data.project.id);
+  const agent = ctx.agentContext(data.project.id, { chapterId: data.chapter.id });
   const scene = await sceneCharacters(ctx, data);
+  const cards = await cardsForChapter(ctx, data.project.id, data.characters, data.chapter.number);
+  const cardOf = (id: string) => cards.find((c) => c.id === id)!;
+  const [facts, knowledge, drift] = await Promise.all([
+    ledgerFacts(ctx, data.project.id),
+    knowledgeItems(ctx, data.project.id),
+    ctx.repos.drift.listForChapter(data.chapter.id),
+  ]);
+  // Drift the author chose to steer back: the director works the plan back in.
+  const steered = drift.filter((d) => d.resolution === 'steer');
   // Summaries are written at lock (Phase 5); they are the only form of old chapters play sees.
   const lockedSummaries = (await ctx.repos.chapters.listForProject(data.project.id)).flatMap((c) =>
     c.status === 'locked' && c.number < data.chapter.number && c.summary
@@ -166,13 +128,14 @@ async function runTurn(
       chapterNumber: data.chapter.number,
       plan: data.plan,
       beats: data.beats,
-      characters: data.characters.map((c) => cardFor(c, data.bible)),
+      characters: cards,
       sceneCharacterIds: scene.ids,
       sceneLocationId: scene.locationId,
       turns: data.turns.map(toContextTurn),
       lockedSummaries,
-      facts: [], // The continuity ledger is committed at lock (Phase 5).
-      promises: await plannedPromises(ctx, data.project.id),
+      facts,
+      promises: await promisesForPlay(ctx, data.project.id, data.chapter.number),
+      steer: steered.map((d) => d.description),
     },
     DIRECTOR_BUDGET_TOKENS,
   );
@@ -198,8 +161,8 @@ async function runTurn(
       const voiced = await runNpcVoice(
         agent,
         buildNpcContext({
-          character: cardFor(character, data.bible),
-          knowledge: [], // The knowledge map is committed at lock (Phase 5).
+          character: cardOf(character.id),
+          knowledge,
           otherCharactersInScene: others.map((o) => ({ name: o.name, relationship: '' })),
           recentTurns: data.turns.map(toContextTurn),
           situation,
@@ -229,7 +192,14 @@ async function runTurn(
   try {
     const previous = await ctx.repos.play.lastChronicle(data.chapter.id);
     const locations = await ctx.repos.characters.listLocations(data.project.id);
+    // Recent facts get short refs so a contradiction notice can point at one.
+    const factRefs = new Map(facts.slice(-40).map((f, i) => [`F${i + 1}`, f.id]));
+    const statements = new Map(facts.map((f) => [f.id, f.statement]));
     const found = await runExtractor(agent, {
+      facts: [...factRefs].map(([ref, id]) => ({ ref, statement: statements.get(id)! })),
+      principles: cards
+        .filter((c) => c.tier === 'major' && (c.card.principles ?? []).length > 0)
+        .map((c) => ({ character: c.name, principles: c.card.principles ?? [] })),
       beats: data.beats,
       knownCharacters: data.characters.map((c) => c.name),
       knownLocations: locations.map((l) => l.name),
@@ -238,17 +208,11 @@ async function runTurn(
       narration,
     });
 
-    // Newly named characters become provisional records; cards are drafted in Phase 4.
+    // Newly named characters: walk-ons get a card at once; others get a drafted card to approve.
     for (const nc of found.newCharacters) {
       if (ctx.repos.characters.findByName(data.characters, nc.name)) continue;
       data.characters.push(
-        await ctx.repos.characters.create({
-          projectId: data.project.id,
-          name: nc.name,
-          tier: nc.proposedTier,
-          status: 'provisional',
-          firstChapter: data.chapter.number,
-        }),
+        await registerNewCharacter(ctx, data.project.id, data.chapter.number, nc, found.location),
       );
     }
     const characterIds = found.characters
@@ -284,6 +248,13 @@ async function runTurn(
       ...data.beats.filter((b) => b.source === 'play').map((b) => b.id),
       ...found.beatsHit,
     ]);
+    const notices = await recordDrift(
+      ctx,
+      { projectId: data.project.id, chapterId: data.chapter.id, turnId: directorTurn.id },
+      found.drift,
+      factRefs,
+    );
+    if (notices.length) sink.event('drift', { notices });
     sink.event('chronicle', {
       event,
       beats: beatStatus(data.plan, [...hit], data.chapter.manualBeats),
@@ -387,10 +358,12 @@ export async function retryTurn(ctx: ServiceContext, chapterId: string, sink: Pl
 
 export async function getPlayState(ctx: ServiceContext, chapterId: string) {
   const data = await load(ctx, chapterId);
-  const [chronicle, scene, promises] = await Promise.all([
+  const [chronicle, scene, promises, characters, drift] = await Promise.all([
     ctx.repos.play.listChronicle(chapterId),
     sceneCharacters(ctx, data),
-    plannedPromises(ctx, data.project.id),
+    promisesForPlay(ctx, data.project.id, data.chapter.number),
+    listCharacters(ctx, data.project.id),
+    ctx.repos.drift.listForChapter(chapterId),
   ]);
   return {
     chapter: { id: data.chapter.id, number: data.chapter.number, status: data.chapter.status },
@@ -410,6 +383,17 @@ export async function getPlayState(ctx: ServiceContext, chapterId: string) {
     sceneCharacters: data.characters
       .filter((c) => scene.ids.includes(c.id))
       .map((c) => ({ id: c.id, name: c.name, tier: c.tier, status: c.status })),
+    // The card tray: drafts to approve and promotions to consider, shown between turns.
+    cardTray: characters.filter((c) => c.needsApproval || c.promotion),
+    // Drift notices, shown inline after the turn that raised them.
+    drift: drift.map((d) => ({
+      id: d.id,
+      turnId: d.turnId,
+      kind: d.kind,
+      description: d.description,
+      adoptText: d.details.adoptText,
+      resolution: d.resolution,
+    })),
     openPromises: promises.filter(
       (p) => p.plantedChapter <= data.chapter.number && p.payoffChapter >= data.chapter.number,
     ),
@@ -459,11 +443,25 @@ export async function endChapter(ctx: ServiceContext, chapterId: string) {
     );
   }
   await ctx.repos.chapters.transition(chapterId, 'playing', 'drafting');
+  await requestNovelize(ctx, data.chapter);
 }
 
-/** Returns an ended chapter to play (the review screen's "return to play"). */
+/**
+ * Returns an ended chapter to play (the review screen's "return to play"). Not while a draft
+ * is being written, so a finishing job cannot move the chapter on underneath the author.
+ */
 export async function reopenChapter(ctx: ServiceContext, chapterId: string) {
   const chapter = await ctx.repos.chapters.get(chapterId);
   if (!chapter) throw new NotFoundError('Chapter');
-  await ctx.repos.chapters.transition(chapterId, 'drafting', 'playing');
+  if (chapter.status !== 'drafting' && chapter.status !== 'review') {
+    throw new ConflictError('Only a chapter in drafting or review can return to play');
+  }
+  const job = await ctx.repos.jobs.latestForChapter(chapterId, [
+    'chapter.novelize',
+    'chapter.cohesion',
+  ]);
+  if (job && (job.status === 'queued' || job.status === 'running')) {
+    throw new ConflictError('Wait for the draft to finish, then return to play from review');
+  }
+  await ctx.repos.chapters.transition(chapterId, chapter.status, 'playing');
 }

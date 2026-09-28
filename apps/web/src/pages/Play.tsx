@@ -2,7 +2,8 @@ import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 're
 import { api, errorText, streamPost } from '../api.js';
 import { ErrorNote, Working, humanize } from '../components.js';
 import { navigate } from '../router.js';
-import type { Beat, PlayState, Turn } from '../types.js';
+import type { Beat, DriftView, PlayState, Turn } from '../types.js';
+import { CardEditor, CharacterSummary } from './Characters.js';
 
 type InputKind = 'in_character' | 'author_note';
 
@@ -34,6 +35,57 @@ function TurnView({ turn }: { turn: Turn }) {
   return <p className="player-move">{turn.content}</p>;
 }
 
+const DRIFT_LABELS: Record<DriftView['kind'], string> = {
+  beat: 'Off the planned beat',
+  contradiction: 'Contradicts the ledger',
+  thread: 'New major thread',
+  principle: 'A character breaks type',
+};
+const ADOPT_LABELS: Record<DriftView['kind'], string> = {
+  beat: 'the outline beat becomes',
+  contradiction: 'the ledger fact becomes',
+  thread: 'a new promise to pay off',
+  principle: "the character's card records",
+};
+
+/** A drift notice, inline after the turn that raised it: steer back or adopt. Never silent. */
+function DriftNotice({
+  drift,
+  actionable,
+  onResolve,
+}: {
+  drift: DriftView;
+  actionable: boolean;
+  onResolve: (resolution: 'steer' | 'adopt') => void;
+}) {
+  return (
+    <aside className={`drift${drift.resolution ? ' resolved' : ''}`} role="note">
+      <strong>{DRIFT_LABELS[drift.kind]}:</strong> {drift.description}
+      {drift.adoptText && (
+        <div className="muted small-print">
+          If adopted, {ADOPT_LABELS[drift.kind]}: {drift.adoptText}
+        </div>
+      )}
+      {drift.resolution ? (
+        <div className="muted small-print">
+          {drift.resolution === 'steer' ? 'Steering back to the plan.' : 'Adopted.'}
+        </div>
+      ) : (
+        actionable && (
+          <div className="toolbar">
+            <button className="quiet" onClick={() => onResolve('steer')}>
+              Steer back
+            </button>
+            <button className="quiet" onClick={() => onResolve('adopt')}>
+              Adopt
+            </button>
+          </div>
+        )
+      )}
+    </aside>
+  );
+}
+
 export function PlayScreen({ projectId, chapterId }: { projectId: string; chapterId: string }) {
   const [state, setState] = useState<PlayState | null>(null);
   const [live, setLive] = useState<{ author?: Turn; text: string; npc?: string } | null>(null);
@@ -43,6 +95,7 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<ReturnType<typeof errorText> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [openCard, setOpenCard] = useState<string | null>(null);
   const inFlight = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -53,6 +106,14 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
   useEffect(() => {
     reload().catch((e) => setError(errorText(e)));
   }, [reload]);
+
+  // Card drafts run as background jobs; refresh the tray while any are being drafted.
+  const drafting = state?.cardTray.some((c) => c.drafting);
+  useEffect(() => {
+    if (!drafting || busy) return;
+    const timer = setInterval(() => void reload().catch(() => {}), 4000);
+    return () => clearInterval(timer);
+  }, [drafting, busy, reload]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -147,7 +208,25 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
 
         <article className="pane" aria-live="polite">
           {state.turns.map((t) => (
-            <TurnView key={t.id} turn={t} />
+            <div key={t.id}>
+              <TurnView turn={t} />
+              {state.drift
+                .filter((d) => d.turnId === t.id)
+                .map((d) => (
+                  <DriftNotice
+                    key={d.id}
+                    drift={d}
+                    actionable={playing && !busy}
+                    onResolve={(resolution) =>
+                      action(() =>
+                        api<PlayState>('POST', `/chapters/${chapterId}/drift/${d.id}`, {
+                          resolution,
+                        }),
+                      )
+                    }
+                  />
+                ))}
+            </div>
           ))}
           {live?.author && <TurnView turn={live.author} />}
           {live && (
@@ -230,16 +309,18 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
           </div>
         )}
 
-        {chapter.status === 'drafting' && (
+        {!playing && chapter.status !== 'planned' && (
           <div className="card stack">
-            <p>Chapter ended. Novelizing and review arrive in Phase 5.</p>
-            <div>
-              <button
-                onClick={() =>
-                  action(() => api<PlayState>('POST', `/chapters/${chapterId}/reopen`))
-                }
-              >
-                Return to play
+            <p>
+              {chapter.status === 'drafting'
+                ? 'Chapter ended. The prose draft is being written and checked.'
+                : chapter.status === 'locked'
+                  ? 'This chapter is locked.'
+                  : 'The draft is ready for your review.'}
+            </p>
+            <div className="toolbar">
+              <button onClick={() => navigate(`/projects/${projectId}/review/${chapterId}`)}>
+                Open review
               </button>
             </div>
           </div>
@@ -291,6 +372,41 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
             </button>
           )}
         </section>
+
+        {state.cardTray.length > 0 && (
+          <section>
+            <h2>Cards to review ({state.cardTray.length})</h2>
+            {busy ? (
+              <p className="muted small-print">Available when this turn finishes.</p>
+            ) : (
+              <ul className="plain tray">
+                {state.cardTray.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      className="quiet"
+                      aria-expanded={openCard === c.id}
+                      onClick={() => setOpenCard(openCard === c.id ? null : c.id)}
+                    >
+                      <CharacterSummary c={c} />
+                    </button>
+                    {openCard === c.id && (
+                      <div className="card">
+                        <CardEditor
+                          character={c}
+                          others={[...state.sceneCharacters, ...state.cardTray].filter(
+                            (o, i, all) =>
+                              o.id !== c.id && all.findIndex((x) => x.id === o.id) === i,
+                          )}
+                          onChange={() => void reload().catch(() => {})}
+                        />
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
 
         <section>
           <h2>In scene</h2>

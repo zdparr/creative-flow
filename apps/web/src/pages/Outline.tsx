@@ -9,6 +9,7 @@ import {
   Working,
   humanize,
 } from '../components.js';
+import { ReplanPanel } from './Replan.js';
 import type { OutlineChapter, OutlineView, Project } from '../types.js';
 import { VersionPicker } from './Bible.js';
 
@@ -125,6 +126,9 @@ export function OutlineScreen({
 
   return (
     <section className="stack">
+      {(project.status === 'writing' || project.status === 'assembling') && (
+        <ReplanPanel projectId={project.id} onApplied={() => void load().catch(() => {})} />
+      )}
       {generating && (
         <Working
           label={

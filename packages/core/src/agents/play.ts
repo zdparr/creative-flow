@@ -92,6 +92,10 @@ export interface ExtractorInput {
   previousSummary: string | null;
   input: ProtagonistInput | null;
   narration: string;
+  /** Continuity facts with short refs ("F1"), so contradiction drift can point at one. */
+  facts?: { ref: string; statement: string }[];
+  /** Core principles of major characters, so principle drift can be noticed. */
+  principles?: { character: string; principles: string[] }[];
 }
 
 /** Turns one exchange into a chronicle event plus candidate continuity facts. */
@@ -104,6 +108,8 @@ export async function runExtractor(
     `# Required beats this chapter\n${input.beats.map((b) => `- ${b.id}${b.hit ? ' (already hit)' : ''}: ${b.description}`).join('\n')}`,
     `# Known characters\n${input.knownCharacters.join(', ') || '(none)'}`,
     `# Known locations\n${input.knownLocations.join(', ') || '(none)'}`,
+    `# Continuity facts\n${(input.facts ?? []).map((f) => `- ${f.ref}: ${f.statement}`).join('\n') || '(none yet)'}`,
+    `# Character principles\n${(input.principles ?? []).map((p) => `- ${p.character} never: ${p.principles.join('; ')}`).join('\n') || '(none recorded)'}`,
     `# Previous event\n${input.previousSummary ?? '(This is the opening of the chapter.)'}`,
     `# This exchange`,
     input.input
@@ -121,9 +127,19 @@ export async function runExtractor(
     messages: [{ role: 'user', content }],
     schema: extractorOutputSchema,
     maxTokens: 8000,
-    check: (out) =>
-      out.beatsHit
-        .filter((id) => !beatIds.has(id))
-        .map((id) => `beatsHit: "${id}" is not a required beat id`),
+    check: (out) => {
+      const refs = new Set((input.facts ?? []).map((f) => f.ref));
+      return [
+        ...out.beatsHit
+          .filter((id) => !beatIds.has(id))
+          .map((id) => `beatsHit: "${id}" is not a required beat id`),
+        ...out.drift
+          .filter((d) => d.beatId !== null && !beatIds.has(d.beatId))
+          .map((d) => `drift: beatId "${d.beatId}" is not a required beat id`),
+        ...out.drift
+          .filter((d) => d.factRef !== null && !refs.has(d.factRef))
+          .map((d) => `drift: factRef "${d.factRef}" is not a continuity fact ref`),
+      ];
+    },
   });
 }

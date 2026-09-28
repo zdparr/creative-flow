@@ -111,10 +111,10 @@ describe('Phase 3: play a chapter', () => {
     expect(event.extracted.facts[0]!.statement).toContain('first bottle');
     expect(event.extracted.promises).toHaveLength(1);
 
-    // A newly named character becomes a provisional record; the location is created once.
+    // A newly named walk-on gets an approved card at once; the location is created once.
     const characters = await ctx.repos.characters.list(state.project.id);
     expect(characters.find((c) => c.name === 'Old Hendry')).toMatchObject({
-      status: 'provisional',
+      status: 'approved',
       tier: 'walk_on',
       firstChapter: 1,
     });

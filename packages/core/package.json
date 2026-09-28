@@ -22,9 +22,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "docx": "^9.8.1",
+    "jszip": "^3.10.2",
+    "pdfkit": "^0.20.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "jszip": "^3.10.2"
+    "@types/pdfkit": "^0.17.6"
   }
 }

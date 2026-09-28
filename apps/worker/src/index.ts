@@ -1,6 +1,23 @@
 import { AnthropicLlmClient, JOB_OPTIONS, QUEUE_NAME, loadWorkerEnv } from '@storyforge/core';
 import { createDb } from '@storyforge/db';
-import { type OutlineJobInput, createServiceContext, generateOutline } from '@storyforge/services';
+import {
+  type BookReviewJobInput,
+  type CohesionJobInput,
+  type DraftCardJobInput,
+  type ExportJobInput,
+  type NovelizeJobInput,
+  type OutlineJobInput,
+  type ReplanJobInput,
+  checkCohesion,
+  createServiceContext,
+  draftCard,
+  exportBook,
+  generateOutline,
+  novelizeChapter,
+  replanOutline,
+  reviewBook,
+  s3FileStore,
+} from '@storyforge/services';
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { createProcessor } from './processor.js';
@@ -19,15 +36,29 @@ const services = createServiceContext({
     models: { fast: env.MODEL_FAST, strong: env.MODEL_STRONG },
     structuredOutputs: env.STRUCTURED_OUTPUTS,
   }),
-  // Jobs can chain follow-up jobs (novelize -> cohesion from Phase 5).
+  // Jobs chain follow-up jobs: novelize -> cohesion, lock -> re-plan.
   enqueue: async (job) => {
     await queue.add(job.type, job.data, { ...JOB_OPTIONS, jobId: job.id });
   },
+  ...(env.S3_BUCKET
+    ? {
+        files: s3FileStore({
+          bucket: env.S3_BUCKET,
+          ...(env.AWS_REGION ? { region: env.AWS_REGION } : {}),
+        }),
+      }
+    : {}),
 });
 
 const processor = createProcessor(
   {
     'outline.generate': (jobId, data) => generateOutline(services, jobId, data as OutlineJobInput),
+    'character.draftCard': (jobId, data) => draftCard(services, jobId, data as DraftCardJobInput),
+    'chapter.novelize': (jobId, data) => novelizeChapter(services, jobId, data as NovelizeJobInput),
+    'chapter.cohesion': (jobId, data) => checkCohesion(services, jobId, data as CohesionJobInput),
+    'outline.replan': (jobId, data) => replanOutline(services, jobId, data as ReplanJobInput),
+    'book.review': (jobId, data) => reviewBook(services, jobId, data as BookReviewJobInput),
+    'book.export': (jobId, data) => exportBook(services, jobId, data as ExportJobInput),
   },
   services.repos.jobs,
 );

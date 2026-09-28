@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { PlayScreen } from './pages/Play.js';
 import { ProjectPage } from './pages/Project.js';
 import { ProjectsPage } from './pages/Projects.js';
+import { ReviewScreen } from './pages/Review.js';
 import { match, navigate, usePath } from './router.js';
 import type { Me } from './types.js';
 
@@ -58,6 +59,8 @@ function Routes() {
   const path = usePath();
   const play = match('/projects/:id/play/:chapterId', path);
   if (play) return <PlayScreen projectId={play.id!} chapterId={play.chapterId!} />;
+  const review = match('/projects/:id/review/:chapterId', path);
+  if (review) return <ReviewScreen projectId={review.id!} chapterId={review.chapterId!} />;
   const project = match('/projects/:id', path) ?? match('/projects/:id/:tab', path);
   if (project) return <ProjectPage id={project.id!} tab={project.tab} />;
   return <ProjectsPage />;

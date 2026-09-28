@@ -11,6 +11,30 @@ export const LEDGER_FACT_KINDS = [
 ] as const;
 export type LedgerFactKind = (typeof LEDGER_FACT_KINDS)[number];
 
+export const DRIFT_KINDS = ['beat', 'contradiction', 'thread', 'principle'] as const;
+export type DriftKind = (typeof DRIFT_KINDS)[number];
+
+export const driftNoticeSchema = z.object({
+  kind: z
+    .enum(DRIFT_KINDS)
+    .describe(
+      'beat: play moved away from a required beat; contradiction: it contradicts a continuity fact; thread: it opened a major unplanned thread; principle: a character broke one of their principles',
+    ),
+  description: z.string().describe('What diverged, in one sentence the author can act on'),
+  beatId: z.string().nullable().describe('For beat drift: the id of the affected required beat'),
+  factRef: z
+    .string()
+    .nullable()
+    .describe('For contradiction drift: the ref of the continuity fact, e.g. "F3"'),
+  character: z.string().nullable().describe('For principle drift: the character'),
+  adoptText: z
+    .string()
+    .describe(
+      'If the author adopts the change: the new beat description, the corrected fact, the thread to track, or the principle change',
+    ),
+});
+export type DriftNotice = z.infer<typeof driftNoticeSchema>;
+
 export const extractorOutputSchema = z.object({
   summary: z.string().describe('One or two sentences: what happened in this exchange'),
   characters: z.array(z.string()).describe('Names of characters present or acting'),
@@ -44,6 +68,9 @@ export const extractorOutputSchema = z.object({
       }),
     )
     .describe('New setups the reader will expect to pay off'),
+  drift: z
+    .array(driftNoticeSchema)
+    .describe('Divergences from the chapter plan, facts, or cards; usually empty'),
 });
 export type ExtractorOutput = z.infer<typeof extractorOutputSchema>;
 
@@ -70,3 +97,11 @@ export const voiceCharacterInputSchema = z.object({
     .string()
     .describe('What just happened and what the character is responding to, in 1-3 sentences'),
 });
+
+/** A stored drift notice's specifics; `factId` is the ledger fact a contradiction concerns. */
+export interface DriftDetails {
+  beatId: string | null;
+  factId: string | null;
+  character: string | null;
+  adoptText: string;
+}

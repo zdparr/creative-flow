@@ -1,6 +1,7 @@
 // Recorded agent outputs for tests: a small four-chapter novella. Every fixture must
 // validate against its schema (see schemas.test.ts), so CI never calls the live API.
 import type { BibleContent } from '../schemas/bible.js';
+import type { CardContent } from '../schemas/character.js';
 import type { InterviewerOutput } from '../schemas/interview.js';
 import type { OutlinerOutput } from '../schemas/outline.js';
 import type { ExtractorOutput, NpcVoiceOutput } from '../schemas/play.js';
@@ -207,6 +208,7 @@ export const sampleOpeningExtraction: ExtractorOutput = {
     },
   ],
   promises: [],
+  drift: [],
 };
 
 export const sampleTurnNarration: FakeStream = {
@@ -238,9 +240,53 @@ export const sampleTurnExtraction: ExtractorOutput = {
       entities: ['Maren Tull'],
     },
   ],
+  drift: [],
 };
 
 export const sampleNpcVoice: NpcVoiceOutput = {
   action: 'Tomas sets his clipboard on the wet rail.',
   dialogue: 'The order is signed, Miss Tull. I am sorry for it.',
+};
+
+// ---------- characters (Phase 4) ----------
+
+/** A turn in which a minor character is newly named. */
+export const sampleMinorCharacterExtraction: ExtractorOutput = {
+  summary:
+    'Ada Fenn, the harbor clerk, rows out with the post and warns Maren about the inspector.',
+  characters: ['Maren Tull', 'Ada Fenn'],
+  location: 'Skerry Light',
+  beatsHit: ['c1-b2'],
+  newCharacters: [
+    { name: 'Ada Fenn', proposedTier: 'minor', role: 'harbor clerk', trait: 'gossips to be kind' },
+  ],
+  facts: [],
+  promises: [],
+  drift: [],
+};
+
+/** The card drafter's output for Ada Fenn at the minor tier. */
+export const sampleAdaCard = {
+  role: 'harbor clerk',
+  location: 'Harrow harbor office',
+  trait: 'gossips to be kind',
+  firstAppearance: 1,
+  storyRole: 'Brings Maren news from the mainland and the first warning about Tomas.',
+  want: 'To keep Harrow from emptying out entirely.',
+  relationshipToProtagonist: "Isla's old school friend; treats Maren like a sister she must mind.",
+  voiceNote: 'Quick, warm, always halfway into the next story.',
+};
+
+/** A complete major card, for tests that need one. */
+export const sampleMajorCard: CardContent = {
+  ...sampleAdaCard,
+  principles: ['Never lies to Maren', 'Never leaves Harrow'],
+  goal: 'Keep the village alive.',
+  fearOrFlaw: 'Afraid of being the last one left.',
+  secret: 'She sent the letter that brought the inspector.',
+  arcStart: 'Holds the village together by talking.',
+  arcEnd: 'Lets people leave with her blessing.',
+  checkpoints: [{ chapter: 3, description: 'Admits she called the inspector.', met: false }],
+  keyRelationships: [{ name: 'Maren Tull', relationship: 'protective friend' }],
+  voiceSamples: ['You look like the tide dragged you here.', 'I only tell the true ones.'],
 };

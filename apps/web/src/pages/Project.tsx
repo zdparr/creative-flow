@@ -4,11 +4,14 @@ import { ErrorNote, STATUS_LABELS } from '../components.js';
 import { navigate } from '../router.js';
 import type { Project, ProjectStatus } from '../types.js';
 import { BibleScreen } from './Bible.js';
+import { BookScreen } from './Book.js';
 import { ChaptersScreen } from './Chapters.js';
+import { CharactersScreen } from './Characters.js';
 import { InterviewScreen } from './Interview.js';
 import { OutlineScreen } from './Outline.js';
 
-type Tab = 'interview' | 'bible' | 'outline' | 'chapters';
+const TABS = ['interview', 'bible', 'outline', 'chapters', 'characters', 'book'] as const;
+type Tab = (typeof TABS)[number];
 
 const ORDER: ProjectStatus[] = [
   'intake',
@@ -53,15 +56,16 @@ export function ProjectPage({ id, tab }: { id: string; tab?: string }) {
     );
   if (!project) return null;
 
-  const active: Tab =
-    tab === 'interview' || tab === 'bible' || tab === 'outline' || tab === 'chapters'
-      ? tab
-      : defaultTab(project.status);
+  const active: Tab = (TABS as readonly string[]).includes(tab ?? '')
+    ? (tab as Tab)
+    : defaultTab(project.status);
   const tabs: { key: Tab; label: string; enabled: boolean }[] = [
     { key: 'interview', label: 'Interview', enabled: true },
     { key: 'bible', label: 'Bible', enabled: reached(project.status, 'bible_review') },
     { key: 'outline', label: 'Outline', enabled: reached(project.status, 'outline_review') },
     { key: 'chapters', label: 'Chapters', enabled: reached(project.status, 'writing') },
+    { key: 'characters', label: 'Characters', enabled: reached(project.status, 'writing') },
+    { key: 'book', label: 'Book', enabled: reached(project.status, 'writing') },
   ];
 
   return (
@@ -90,6 +94,8 @@ export function ProjectPage({ id, tab }: { id: string; tab?: string }) {
       {active === 'bible' && <BibleScreen project={project} onChange={reload} />}
       {active === 'outline' && <OutlineScreen project={project} onChange={reload} />}
       {active === 'chapters' && <ChaptersScreen project={project} />}
+      {active === 'characters' && <CharactersScreen project={project} />}
+      {active === 'book' && <BookScreen project={project} onChange={reload} />}
     </main>
   );
 }

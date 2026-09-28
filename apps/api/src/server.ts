@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AnthropicLlmClient, JOB_OPTIONS, QUEUE_NAME, loadWebEnv } from '@storyforge/core';
 import { createDb } from '@storyforge/db';
-import { createServiceContext } from '@storyforge/services';
+import { createServiceContext, s3FileStore } from '@storyforge/services';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { buildApp } from './app.js';
@@ -22,6 +22,14 @@ const services = createServiceContext({
   enqueue: async (job) => {
     await queue.add(job.type, job.data, { ...JOB_OPTIONS, jobId: job.id });
   },
+  ...(env.S3_BUCKET
+    ? {
+        files: s3FileStore({
+          bucket: env.S3_BUCKET,
+          ...(env.AWS_REGION ? { region: env.AWS_REGION } : {}),
+        }),
+      }
+    : {}),
 });
 
 const app = await buildApp({

@@ -6,21 +6,11 @@ import {
 } from '@storyforge/core';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../client.js';
-import {
-  chapters,
-  characters,
-  chronicleEvents,
-  locations,
-  outlineChapters,
-  playTurns,
-  projects,
-} from '../schema.js';
+import { chapters, chronicleEvents, outlineChapters, playTurns, projects } from '../schema.js';
 
 export type ChapterRow = typeof chapters.$inferSelect;
 export type PlayTurn = typeof playTurns.$inferSelect;
 export type ChronicleEvent = typeof chronicleEvents.$inferSelect;
-export type CharacterRow = typeof characters.$inferSelect;
-export type LocationRow = typeof locations.$inferSelect;
 
 export function createChapterRepo(db: Db) {
   return {
@@ -75,6 +65,36 @@ export function createChapterRepo(db: Db) {
       if (updated.length === 0) throw new ConflictError(`Chapter is no longer ${from}`);
     },
 
+    /** Locks a chapter from review (or re-confirms one flagged for recheck). */
+    async markLocked(
+      id: string,
+      from: ChapterStatus,
+      values: { summary: string | null; snapshotId: string },
+    ): Promise<void> {
+      assertChapterTransition(from, 'locked');
+      const updated = await db
+        .update(chapters)
+        .set({
+          status: 'locked',
+          lockedAt: new Date(),
+          lockedSnapshotId: values.snapshotId,
+          ...(values.summary !== null ? { summary: values.summary } : {}),
+        })
+        .where(and(eq(chapters.id, id), eq(chapters.status, from)))
+        .returning({ id: chapters.id });
+      if (updated.length === 0) throw new ConflictError(`Chapter is no longer ${from}`);
+    },
+
+    /** Applies precomputed status changes (from planUnlock). */
+    async setStatus(id: string, status: ChapterStatus): Promise<void> {
+      await db.update(chapters).set({ status }).where(eq(chapters.id, id));
+    },
+
+    /** Points a chapter at its plan in a newer outline version. */
+    async setOutlineChapter(id: string, outlineChapterId: string): Promise<void> {
+      await db.update(chapters).set({ outlineChapterId }).where(eq(chapters.id, id));
+    },
+
     async setManualBeats(id: string, beatIds: string[]): Promise<void> {
       await db.update(chapters).set({ manualBeats: beatIds }).where(eq(chapters.id, id));
     },
@@ -112,6 +132,16 @@ export function createPlayRepo(db: Db) {
         .from(chronicleEvents)
         .where(eq(chronicleEvents.chapterId, chapterId))
         .orderBy(asc(chronicleEvents.seq));
+    },
+
+    /** Every chronicle event in the project, with its chapter number, in story order. */
+    listProjectChronicle(projectId: string) {
+      return db
+        .select({ event: chronicleEvents, chapterNumber: chapters.number })
+        .from(chronicleEvents)
+        .innerJoin(chapters, eq(chronicleEvents.chapterId, chapters.id))
+        .where(eq(chronicleEvents.projectId, projectId))
+        .orderBy(asc(chapters.number), asc(chronicleEvents.seq));
     },
 
     async lastChronicle(chapterId: string): Promise<ChronicleEvent | null> {
@@ -152,52 +182,6 @@ export function createPlayRepo(db: Db) {
         .where(and(eq(chronicleEvents.id, eventId), eq(chronicleEvents.chapterId, chapterId)))
         .returning({ id: chronicleEvents.id });
       if (updated.length === 0) throw new ConflictError('Chronicle event not found');
-    },
-  };
-}
-
-const norm = (s: string) => s.trim().toLowerCase();
-
-export function createCharacterRepo(db: Db) {
-  return {
-    list(projectId: string): Promise<CharacterRow[]> {
-      return db.select().from(characters).where(eq(characters.projectId, projectId));
-    },
-
-    async create(
-      values: Pick<CharacterRow, 'projectId' | 'name' | 'tier' | 'status'> &
-        Partial<Pick<CharacterRow, 'aliases' | 'firstChapter'>>,
-    ): Promise<CharacterRow> {
-      const [row] = await db.insert(characters).values(values).returning();
-      return row!;
-    },
-
-    /** Finds a character by name or alias, case-insensitively. */
-    findByName(list: CharacterRow[], name: string): CharacterRow | undefined {
-      const n = norm(name);
-      return list.find(
-        (c) =>
-          norm(c.name) === n ||
-          c.aliases.some((a) => norm(a) === n) ||
-          norm(c.name).split(' ')[0] === n,
-      );
-    },
-
-    listLocations(projectId: string): Promise<LocationRow[]> {
-      return db.select().from(locations).where(eq(locations.projectId, projectId));
-    },
-
-    /** Returns the location with this name, creating it on first mention. */
-    async ensureLocation(projectId: string, name: string, chapter: number): Promise<LocationRow> {
-      const existing = (await this.listLocations(projectId)).find(
-        (l) => norm(l.name) === norm(name),
-      );
-      if (existing) return existing;
-      const [row] = await db
-        .insert(locations)
-        .values({ projectId, name: name.trim(), firstChapter: chapter })
-        .returning();
-      return row!;
     },
   };
 }

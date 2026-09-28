@@ -70,7 +70,10 @@ envVarGroups:
       # Constrained JSON output; leave off until every configured model supports it.
       - key: STRUCTURED_OUTPUTS
         value: 'false'
+      # Book exports go to S3 when S3_BUCKET is set; left empty, they are stored in Postgres.
       - key: S3_BUCKET
+        sync: false
+      - key: AWS_REGION
         sync: false
       - key: AWS_ACCESS_KEY_ID
         sync: false

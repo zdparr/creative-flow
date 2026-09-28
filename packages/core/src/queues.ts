@@ -1,9 +1,11 @@
-/** Job names from the spec's jobs table. Processors arrive in their build phases. */
+/**
+ * Job names from the spec's jobs table. The spec's chapter.lockFinalize is folded into the lock
+ * transaction itself (the summary comes from the cohesion job), so it has no job of its own.
+ */
 export const JOB_TYPES = [
   'outline.generate',
   'chapter.novelize',
   'chapter.cohesion',
-  'chapter.lockFinalize',
   'outline.replan',
   'character.draftCard',
   'book.review',

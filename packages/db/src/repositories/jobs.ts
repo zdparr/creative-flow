@@ -1,5 +1,5 @@
 import type { JobType, LlmCallLog } from '@storyforge/core';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import { jobs, llmCalls } from '../schema.js';
 
@@ -40,11 +40,36 @@ export function createJobRepo(db: Db) {
       return row ?? null;
     },
 
+    /** Every queued or running job of this type in the project. */
+    listActive(projectId: string, type: JobType): Promise<JobRow[]> {
+      return db
+        .select()
+        .from(jobs)
+        .where(
+          and(
+            eq(jobs.projectId, projectId),
+            eq(jobs.type, type),
+            inArray(jobs.status, ['queued', 'running']),
+          ),
+        );
+    },
+
     async latest(projectId: string, type: JobType): Promise<JobRow | null> {
       const [row] = await db
         .select()
         .from(jobs)
         .where(and(eq(jobs.projectId, projectId), eq(jobs.type, type)))
+        .orderBy(desc(jobs.createdAt))
+        .limit(1);
+      return row ?? null;
+    },
+
+    /** The newest job of any of these types for one chapter (by its input's chapterId). */
+    async latestForChapter(chapterId: string, types: JobType[]): Promise<JobRow | null> {
+      const [row] = await db
+        .select()
+        .from(jobs)
+        .where(and(inArray(jobs.type, types), sql`${jobs.input}->>'chapterId' = ${chapterId}`))
         .orderBy(desc(jobs.createdAt))
         .limit(1);
       return row ?? null;

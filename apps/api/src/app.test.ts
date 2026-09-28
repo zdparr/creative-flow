@@ -1,6 +1,9 @@
 import {
   FakeLlm,
   sampleBible,
+  sampleBookReview,
+  sampleReplan,
+  seedTomasCard,
   sampleInterviewBible,
   sampleInterviewRound,
   sampleOpening,
@@ -21,6 +24,12 @@ import {
 import { eq } from 'drizzle-orm';
 import JSZip from 'jszip';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  draftSeedChapter,
+  runQueued,
+  seededProject,
+  waiveAndLock,
+} from '@storyforge/services/testing';
 import { type AppDeps, buildApp } from './app.js';
 
 const credentials = { email: 'author@example.com', password: 'correct horse battery' };
@@ -354,5 +363,89 @@ describe('chapter download', () => {
     const { call } = await signedIn();
     const { chapter } = await lockedChapter('someone@else.com');
     expect((await call('GET', `/chapters/${chapter.id}/download.docx`)).statusCode).toBe(404);
+  });
+});
+
+describe('review, characters, and book API', () => {
+  const kit = () => ({ ctx: services, llm, queued, close });
+
+  it('reviews, waives, and locks chapters, then reads the cohesion structures', async () => {
+    const { call } = await signedIn();
+    const { project, chapters } = await seededProject(services);
+    const [c1, c2] = chapters;
+
+    await draftSeedChapter(kit(), c1!.id, 1);
+    const review = (await call('GET', `/chapters/${c1!.id}/draft`)).json();
+    expect(review.canLock).toBe(true);
+    expect(review.paragraphs).toHaveLength(2);
+    const locked = await call('POST', `/chapters/${c1!.id}/lock`);
+    expect(locked.json().chapter.status).toBe('locked');
+    await runQueued(kit(), 'outline.replan', sampleReplan);
+
+    expect((await call('GET', `/projects/${project.id}/ledger`)).json()).toHaveLength(1);
+    const promises = (await call('GET', `/projects/${project.id}/promises`)).json();
+    expect(promises[0]).toMatchObject({ status: 'open', window: { from: 2, to: 2 } });
+    const knowledge = (await call('GET', `/projects/${project.id}/knowledge`)).json();
+    expect(knowledge[0]).toMatchObject({ character: 'Maren Tull', learnedChapter: 1 });
+
+    await draftSeedChapter(kit(), c2!.id, 2);
+    const refused = await call('POST', `/chapters/${c2!.id}/lock`);
+    expect(refused.statusCode).toBe(422);
+    expect(refused.json().problems).toEqual(['2 blocker(s) not fixed or waived']);
+    const noReason = await call('POST', `/chapters/${c2!.id}/issues/r1/waive`, { reason: '' });
+    expect(noReason.statusCode).toBe(422);
+    for (const id of ['r1', 'c1']) {
+      await call('POST', `/chapters/${c2!.id}/issues/${id}/waive`, { reason: 'Intentional' });
+    }
+    // Tomas's checkpoint is not pending until this lock, so only the blockers mattered.
+    expect((await call('POST', `/chapters/${c2!.id}/lock`)).statusCode).toBe(200);
+
+    const unlocked = (await call('POST', `/chapters/${c1!.id}/unlock`)).json();
+    expect(unlocked.flagged).toEqual([2]);
+  });
+
+  it('lists, edits, and approves character cards', async () => {
+    const { call } = await signedIn();
+    const { project, tomas } = await seededProject(services);
+    const list = (await call('GET', `/projects/${project.id}/characters`)).json();
+    expect(list.map((c: { name: string }) => c.name)).toEqual(['Maren Tull', 'Tomas Reyne']);
+
+    const bad = await call('PATCH', `/characters/${tomas.id}`, {
+      card: { ...seedTomasCard, principles: [] },
+    });
+    expect(bad.statusCode).toBe(422);
+    const renamed = await call('PATCH', `/characters/${tomas.id}`, { aliases: ['the inspector'] });
+    expect(renamed.json().aliases).toEqual(['the inspector']);
+    const promoted = await call('POST', `/characters/${tomas.id}/draft`, { notes: 'Older.' });
+    expect(promoted.json().drafting).toBe(true);
+    expect(queued.at(-1)).toMatchObject({ type: 'character.draftCard' });
+  });
+
+  it('assembles and exports the book, and downloads the file', async () => {
+    const { call } = await signedIn();
+    const { project, chapters } = await seededProject(services);
+    for (const n of [1, 2, 3] as const) {
+      await draftSeedChapter(kit(), chapters[n - 1]!.id, n);
+      await waiveAndLock(kit(), chapters[n - 1]!.id);
+    }
+    const assembled = (await call('POST', `/projects/${project.id}/assemble`)).json();
+    expect(assembled.project.status).toBe('assembling');
+    await runQueued(kit(), 'book.review', sampleBookReview);
+
+    await call('POST', `/projects/${project.id}/export`, { format: 'markdown' });
+    await runQueued(kit(), 'book.export');
+    const book = (await call('GET', `/projects/${project.id}/book`)).json();
+    expect(book.review.issues).toHaveLength(1);
+    const file = await call(
+      'GET',
+      `/projects/${project.id}/exports/${book.exports[0].id}/download`,
+    );
+    expect(file.statusCode).toBe(200);
+    expect(file.headers['content-type']).toContain('text/markdown');
+    expect(file.headers['content-disposition']).toBe('attachment; filename="the-tide-letters.md"');
+    expect(file.body).toContain('## Chapter 3: Keep the Light');
+
+    const usage = (await call('GET', `/projects/${project.id}/usage`)).json();
+    expect(usage.byAgent.map((a: { agent: string }) => a.agent)).toContain('book_reviewer');
   });
 });

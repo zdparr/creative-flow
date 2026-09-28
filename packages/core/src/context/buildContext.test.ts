@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { beatStatus } from '../domain/beats.js';
+import { cardFromCast } from '../schemas/character.js';
 import { sampleBible, sampleOutline } from '../testing/fixtures.js';
 import {
   type CharacterCard,
@@ -13,19 +14,19 @@ const maren: CharacterCard = {
   id: 'maren',
   name: 'Maren Tull',
   tier: 'major',
-  card: sampleBible.world.cast[0]!,
+  card: cardFromCast(sampleBible.world.cast[0]!),
 };
 const tomas: CharacterCard = {
   id: 'tomas',
   name: 'Tomas Reyne',
   tier: 'major',
-  card: sampleBible.world.cast[1]!,
+  card: cardFromCast(sampleBible.world.cast[1]!),
 };
 const clerk: CharacterCard = {
   id: 'clerk',
   name: 'Ada Fenn',
   tier: 'walk_on',
-  card: { summary: 'Harbor clerk' },
+  card: { trait: 'Harbor clerk' },
 };
 const plan = sampleOutline.chapters[1]!;
 

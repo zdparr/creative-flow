@@ -1,5 +1,6 @@
 import type { BeatStatus } from '../domain/beats.js';
-import type { BibleContent, CastMember } from '../schemas/bible.js';
+import type { BibleContent } from '../schemas/bible.js';
+import type { CardContent } from '../schemas/character.js';
 import type { OutlineChapter } from '../schemas/outline.js';
 
 // Selective context: each call gets only what it needs, within a token budget. Services load
@@ -12,7 +13,7 @@ export interface CharacterCard {
   id: string;
   name: string;
   tier: 'walk_on' | 'minor' | 'major';
-  card: Partial<CastMember> & Record<string, unknown>;
+  card: Partial<CardContent>;
 }
 
 export interface ContextTurn {
@@ -71,6 +72,8 @@ export interface DirectorContextInput {
   lockedSummaries: { number: number; summary: string }[];
   facts: ContextFact[];
   promises: ContextPromise[];
+  /** Drift the author chose to steer back from; the director works the plan back in. */
+  steer?: string[];
 }
 
 export interface BuiltContext {
@@ -93,9 +96,16 @@ function renderTurn(t: ContextTurn): string {
   return t.role === 'npc' ? `NPC: ${t.content}` : `DIRECTOR: ${t.content}`;
 }
 
-function renderCard(c: CharacterCard): string {
+export function renderCard(c: CharacterCard): string {
   const lines = Object.entries(c.card)
-    .filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    .filter(
+      ([k, v]) =>
+        k !== 'firstAppearance' &&
+        v !== '' &&
+        v !== undefined &&
+        v !== null &&
+        !(Array.isArray(v) && v.length === 0),
+    )
     .map(([k, v]) => `  ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
   return `- ${c.name} (${c.tier})\n${lines.join('\n')}`;
 }
@@ -136,6 +146,11 @@ export function buildDirectorContext(
     `## Beat tracker\n${input.beats.map((b) => `- [${b.hit ? 'x' : ' '}] ${b.id}: ${b.description}`).join('\n')}`,
     `## Arcs this chapter must move\n${input.plan.arcsMoved.map((a) => `- ${a.character}: ${a.change}`).join('\n') || '(none)'}`,
     `## Characters in scene\n${cards.map(renderCard).join('\n') || '(none yet)'}`,
+    ...(input.steer?.length
+      ? [
+          `## Steer back to the plan\nThe author chose to steer back from these divergences. Work the plan back in through events and other characters, without undoing what happened:\n${input.steer.map((d) => `- ${d}`).join('\n')}`,
+        ]
+      : []),
   ].join('\n\n');
 
   let turns = input.turns.slice(-DIRECTOR_TURN_WINDOW);
