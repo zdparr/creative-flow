@@ -1,0 +1,77 @@
+:root {
+  --bg: #faf8f4;
+  --fg: #1f1d1a;
+  --muted: #6b665e;
+  --accent: #7a3e1d;
+  --border: #ddd6ca;
+  color-scheme: light dark;
+  font-family: Georgia, 'Iowan Old Style', serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1816;
+    --fg: #ece6dc;
+    --muted: #a39c90;
+    --accent: #e0a070;
+    --border: #3a352f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.narrow {
+  max-width: 420px;
+}
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.notice {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+
+form {
+  display: grid;
+  gap: 8px;
+}
+
+input,
+button {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border-color: var(--accent);
+  color: var(--accent);
+}

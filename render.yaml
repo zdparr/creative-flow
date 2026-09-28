@@ -1,0 +1,73 @@
+# Story Forge Blueprint. Field names checked against render.com/docs/blueprint-spec on 2026-09-28.
+# Plans: pre-deploy commands need a paid instance, and the queue needs a persistent
+# (non-free) Key Value instance so jobs survive restarts.
+
+services:
+  - type: web
+    name: storyforge-web
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    # Migrations run here, never from the worker.
+    preDeployCommand: node packages/db/dist/migrate.js
+    startCommand: node apps/api/dist/server.js
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase: { name: storyforge-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: storyforge-kv, property: connectionString }
+      # The one author allowed to sign in (v1 is single-user).
+      - key: AUTH_ALLOWED_EMAIL
+        sync: false
+      - fromGroup: storyforge-shared
+
+  - type: worker
+    name: storyforge-worker
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node apps/worker/dist/index.js
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase: { name: storyforge-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: storyforge-kv, property: connectionString }
+      - fromGroup: storyforge-shared
+
+  - type: keyvalue
+    name: storyforge-kv
+    plan: 256mb
+    # Empty list: reachable only from services in this Render account's private network.
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: storyforge-db
+    plan: 0.1c-256mb
+    databaseName: storyforge
+    postgresMajorVersion: '18'
+
+envVarGroups:
+  - name: storyforge-shared
+    envVars:
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MODEL_FAST
+        value: claude-sonnet-5
+      - key: MODEL_STRONG
+        value: claude-opus-5-5
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false

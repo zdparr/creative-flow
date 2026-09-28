@@ -1,0 +1,4 @@
+pnpm-lock.yaml
+dist/
+packages/db/drizzle/
+SPEC.md
