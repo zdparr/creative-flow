@@ -61,6 +61,13 @@ Remaining for done-when: play one chapter on Render against the live models.
 - **Format:** standard manuscript format: Times New Roman 12pt, double-spaced, one-inch margins, half-inch first-line indents (none after the heading or a scene break), chapter heading a third of the way down the page, and `***`/`* * *`/`#` scene breaks rendered as a centered `#`. Built with the `docx` package in `packages/core/src/export/chapterDocx.ts`.
 - **Delivery:** generated on request and streamed back, not stored. The spec's S3-backed `exports` table is for whole-book exports in Phase 7.
 
+### House style: dashes (requested 2026-09-28)
+
+- **Rule:** em dashes only for cut-off speech, directly before the closing quote (`"I'll—"`). No other em dashes, no en dashes, no spaced hyphens as dashes. Hyphens in compound words are fine. The rule lives in `prompts/house-style.md` and applies to every book.
+- **Where:** `withHouseStyle()` appends it to every prose-writing prompt (director, NPC voice, interviewer); the logged prompt version records both, e.g. `director@1+house-style@1`.
+- **Enforcement:** `dashViolations()` checks non-streamed prose, and a violation triggers the usual retry: NPC action and dialogue (the director quotes it verbatim) and the bible's style samples. The director's narration streams live, so for it the rule is a prompt instruction only.
+- **Phase 5 must:** give the novelizer `withHouseStyle` and a `dashProblems` check on its prose, so final chapter text (and the .docx download) is enforced, not just instructed. The cohesion critic should report any that slip through under `style`.
+
 ## Open questions
 
 From the spec:

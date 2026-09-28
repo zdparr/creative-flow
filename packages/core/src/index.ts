@@ -15,6 +15,7 @@ export * from './llm/client.js';
 export * from './llm/pricing.js';
 export * from './llm/runAgent.js';
 export * from './prompts/loader.js';
+export * from './prose/houseStyle.js';
 export * from './queues.js';
 export * from './schemas/bible.js';
 export * from './schemas/interview.js';

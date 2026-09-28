@@ -3,6 +3,7 @@ import type { BeatStatus } from '../domain/beats.js';
 import type { LlmTool } from '../llm/client.js';
 import { costUsd } from '../llm/pricing.js';
 import { type AgentContext, runStructuredAgent } from '../llm/runAgent.js';
+import { dashProblems, withHouseStyle } from '../prose/houseStyle.js';
 import { loadPrompt } from '../prompts/loader.js';
 import {
   type ExtractorOutput,
@@ -32,7 +33,7 @@ export interface DirectorTurnInput {
 
 /** Streams the director's narration for one turn. Returns the full narration. */
 export async function runDirectorTurn(ctx: AgentContext, turn: DirectorTurnInput): Promise<string> {
-  const prompt = loadPrompt('director');
+  const prompt = withHouseStyle(loadPrompt('director'));
   const task = !turn.input
     ? 'Open the chapter: set the scene and bring the protagonist to the first moment of choice.'
     : turn.input.kind === 'author_note'
@@ -71,11 +72,16 @@ export async function runDirectorTurn(ctx: AgentContext, turn: DirectorTurnInput
 export async function runNpcVoice(ctx: AgentContext, npcContext: string): Promise<NpcVoiceOutput> {
   return runStructuredAgent(ctx, {
     agent: 'npc_voice',
-    prompt: loadPrompt('npc'),
+    prompt: withHouseStyle(loadPrompt('npc')),
     tier: 'fast',
     messages: [{ role: 'user', content: npcContext }],
     schema: npcVoiceOutputSchema,
     maxTokens: 8000,
+    // The director quotes this word for word, so it must already follow the house style.
+    check: (out) => [
+      ...dashProblems('action', out.action),
+      ...dashProblems('dialogue', out.dialogue),
+    ],
   });
 }
 

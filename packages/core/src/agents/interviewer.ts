@@ -1,11 +1,13 @@
 import { validateSpine } from '../domain/validation.js';
 import { type AgentContext, runStructuredAgent } from '../llm/runAgent.js';
+import { dashProblems, withHouseStyle } from '../prose/houseStyle.js';
 import { loadPrompt } from '../prompts/loader.js';
 import type { z } from 'zod';
 import {
   type BibleContent,
   type BibleSection,
   type Spine,
+  type StyleGuide,
   bibleSectionSchemas,
 } from '../schemas/bible.js';
 import {
@@ -77,7 +79,7 @@ export async function runInterviewer(
 
   const out = await runStructuredAgent(ctx, {
     agent: 'interviewer',
-    prompt: loadPrompt('interviewer'),
+    prompt: withHouseStyle(loadPrompt('interviewer')),
     tier: 'fast',
     messages: [{ role: 'user', content }],
     schema: interviewerOutputSchema,
@@ -95,6 +97,7 @@ export async function runInterviewer(
         problems.push('kind is "bible" but bible is null');
       } else {
         problems.push(...validateSpine(out.bible.spine).map((p) => `spine: ${p}`));
+        problems.push(...samplesProblems(out.bible.styleGuide.samples));
       }
       return problems;
     },
@@ -125,12 +128,21 @@ export async function reviseBibleSection<S extends BibleSection>(
   const schema = bibleSectionSchemas[input.section] as unknown as z.ZodType<BibleContent[S]>;
   return runStructuredAgent(ctx, {
     agent: 'interviewer',
-    prompt: loadPrompt('interviewer'),
+    prompt: withHouseStyle(loadPrompt('interviewer')),
     tier: 'fast',
     messages: [{ role: 'user', content }],
     schema,
     maxTokens: 32000,
     check: (value) =>
-      input.section === 'spine' ? validateSpine(value as Spine).map((p) => `spine: ${p}`) : [],
+      input.section === 'spine'
+        ? validateSpine(value as Spine).map((p) => `spine: ${p}`)
+        : input.section === 'styleGuide'
+          ? samplesProblems((value as StyleGuide).samples)
+          : [],
   });
+}
+
+/** Sample paragraphs set the book's voice for every prose agent, so they must follow house style. */
+function samplesProblems(samples: string[]): string[] {
+  return samples.flatMap((s, i) => dashProblems(`styleGuide.samples.${i}`, s));
 }
