@@ -744,3 +744,26 @@ textarea.pane {
 .fix del {
   color: var(--muted);
 }
+
+/* Long labels and wide controls must wrap or shrink, never widen a grid column. */
+.story > *,
+.side > * {
+  min-width: 0;
+}
+
+.story select,
+.side select {
+  max-width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.story .toolbar > span,
+.issue p,
+.fix del {
+  overflow-wrap: anywhere;
+}
+
+.side {
+  min-width: 0;
+}

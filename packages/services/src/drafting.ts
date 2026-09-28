@@ -483,7 +483,7 @@ export async function applyFix(
     chapterId,
     prose,
     wordCount: wordCount(prose),
-    notes: `Fix: ${issue.description}`.slice(0, 200),
+    notes: `Fixed ${issue.paragraph > 0 ? `¶${issue.paragraph} ` : ''}(${issue.category})`,
     jobId: null,
   });
   await requestCohesion(ctx, chapter, next.id);

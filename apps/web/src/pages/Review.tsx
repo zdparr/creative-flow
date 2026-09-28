@@ -23,6 +23,10 @@ function replaceParagraph(prose: string, n: number, text: string): string {
     .join('\n\n');
 }
 
+/** Cuts a label to `max` characters, so long version notes cannot stretch the layout. */
+const shorten = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+
 /** A revision note for the novelizer describing one issue. */
 const issueNote = (issue: CohesionIssue) =>
   `${issue.paragraph > 0 ? `Paragraph ${issue.paragraph}: ` : ''}${issue.description} Fix: ${issue.suggestedFix}`;
@@ -320,7 +324,7 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
             <span className="muted">
               Version {older?.version ?? draft.version}
               {older ? ' (older version, read only)' : ''} · {draft.wordCount} words
-              {draft.notes && !older ? ` · ${draft.notes}` : ''}
+              {draft.notes && !older ? ` · ${shorten(draft.notes, 60)}` : ''}
             </span>
             {older && (
               <button className="quiet" onClick={() => setOlder(null)}>
@@ -348,7 +352,7 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
               >
                 {view.versions.map((v) => (
                   <option key={v.id} value={v.version}>
-                    v{v.version} · {v.wordCount} words{v.notes ? ` · ${v.notes}` : ''}
+                    v{v.version} · {v.wordCount} words{v.notes ? ` · ${shorten(v.notes, 40)}` : ''}
                   </option>
                 ))}
               </select>
