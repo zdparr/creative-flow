@@ -11,7 +11,7 @@ import {
 import {
   type InterviewAnswer,
   type InterviewQuestion,
-  type InterviewerOutput,
+  type InterviewStepResult,
   MAX_INTERVIEW_ROUNDS,
   MIN_INTERVIEW_ROUNDS,
   interviewerOutputSchema,
@@ -66,7 +66,7 @@ const STAGE_INSTRUCTIONS = {
 export async function runInterviewer(
   ctx: AgentContext,
   input: InterviewerInput,
-): Promise<InterviewerOutput> {
+): Promise<InterviewStepResult> {
   const stage = interviewStage(input.rounds.length);
   const nextRound = input.rounds.length + 1;
   const content = [
@@ -75,7 +75,7 @@ export async function runInterviewer(
     `# Your task\nThis is step ${nextRound} (at most ${MAX_INTERVIEW_ROUNDS} question rounds). ${STAGE_INSTRUCTIONS[stage]}`,
   ].join('\n\n');
 
-  return runStructuredAgent(ctx, {
+  const out = await runStructuredAgent(ctx, {
     agent: 'interviewer',
     prompt: loadPrompt('interviewer'),
     tier: 'fast',
@@ -91,8 +91,6 @@ export async function runInterviewer(
         if (out.questions.length < 3 || out.questions.length > 5) {
           problems.push(`Ask 3-5 questions (asked ${out.questions.length})`);
         }
-        const ids = out.questions.map((q) => q.id);
-        if (new Set(ids).size !== ids.length) problems.push('Question ids must be unique');
       } else if (!out.bible) {
         problems.push('kind is "bible" but bible is null');
       } else {
@@ -101,6 +99,7 @@ export async function runInterviewer(
       return problems;
     },
   });
+  return { ...out, questions: out.questions.map((q, i) => ({ id: `q${i + 1}`, ...q })) };
 }
 
 export interface ReviseSectionInput {

@@ -16,10 +16,14 @@ function ctx(llm: FakeLlm) {
   return { calls, ctx: { llm, onCall: (log: LlmCallLog) => void calls.push(log) } };
 }
 
+/** Stored rounds carry the ids the server assigned. */
+const storedQuestions = (round: number) =>
+  sampleInterviewRound(round).questions.map((q, i) => ({ id: `q${i + 1}`, ...q }));
+
 const answered = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
     roundNo: i + 1,
-    questions: sampleInterviewRound(i + 1).questions,
+    questions: storedQuestions(i + 1),
     answers: [{ questionId: 'q1', kind: 'answer' as const, text: 'Very dark' }],
   }));
 
@@ -36,9 +40,18 @@ describe('runInterviewer', () => {
   it('returns the first round and logs the call with its prompt version', async () => {
     const { ctx: c, calls } = ctx(new FakeLlm([sampleInterviewRound(1)]));
     const out = await runInterviewer(c, { pitch: samplePitch, rounds: [] });
-    expect(out.questions).toHaveLength(3);
-    expect(calls[0]).toMatchObject({ agent: 'interviewer', promptVersion: 'interviewer@1' });
+    expect(out.questions.map((q) => q.id)).toEqual(['q1', 'q2', 'q3']);
+    expect(calls[0]).toMatchObject({ agent: 'interviewer', promptVersion: 'interviewer@2' });
     expect(calls[0]!.costUsd).toBeGreaterThan(0);
+  });
+
+  it('shows the model the exact output schema', async () => {
+    const llm = new FakeLlm([sampleInterviewRound(1)]);
+    await runInterviewer(ctx(llm).ctx, { pitch: samplePitch, rounds: [] });
+    const system = llm.requests[0]!.system;
+    expect(system).toContain('## Output format');
+    expect(system).toContain('"questions"');
+    expect(system).toContain('"centralQuestion"');
   });
 
   it('renders skipped and "you decide" answers into the transcript', async () => {
@@ -48,7 +61,7 @@ describe('runInterviewer', () => {
       rounds: [
         {
           roundNo: 1,
-          questions: sampleInterviewRound(1).questions,
+          questions: storedQuestions(1),
           answers: [
             { questionId: 'q1', kind: 'skip', text: '' },
             { questionId: 'q2', kind: 'you_decide', text: '' },

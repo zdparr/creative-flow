@@ -96,9 +96,9 @@ export const sampleBible: BibleContent = {
 export const sampleInterviewRound = (round: number): InterviewerOutput => ({
   kind: 'questions',
   questions: [
-    { id: 'q1', topic: 'tone', question: `Round ${round}: how dark should this get?` },
-    { id: 'q2', topic: 'ending', question: 'Does Maren keep the light?' },
-    { id: 'q3', topic: 'length', question: 'Novella or full novel?' },
+    { topic: 'tone', question: `Round ${round}: how dark should this get?` },
+    { topic: 'ending', question: 'Does Maren keep the light?' },
+    { topic: 'length', question: 'Novella or full novel?' },
   ],
   bible: null,
 });

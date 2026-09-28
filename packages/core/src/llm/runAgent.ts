@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { LoadedPrompt } from '../prompts/loader.js';
 import type { LlmClient, ModelTier } from './client.js';
 import { costUsd } from './pricing.js';
@@ -50,6 +50,21 @@ export interface StructuredAgentCall<T> {
 }
 
 /**
+ * The system prompt plus the exact JSON Schema the answer must match. Without it the model
+ * has to guess field names. It is appended to the system prompt so it stays in the cached prefix.
+ */
+export function systemWithSchema(system: string, schema: z.ZodType): string {
+  const jsonSchema = JSON.stringify(z.toJSONSchema(schema), null, 2);
+  return `${system}
+
+## Output format
+
+Respond with a single JSON object, and nothing else, that validates against this JSON Schema. Include every required field and use the field names exactly as written.
+
+${jsonSchema}`;
+}
+
+/**
  * Calls the model for a JSON result. Invalid output (unparseable, schema failure, or a
  * failed domain check) retries once with the problems appended, then throws AgentOutputError.
  */
@@ -59,11 +74,12 @@ export async function runStructuredAgent<T>(
 ): Promise<T> {
   let messages = call.messages;
   let problems: string[] = [];
+  const system = systemWithSchema(call.prompt.system, call.schema);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await ctx.llm.complete({
       tier: call.tier,
-      system: call.prompt.system,
+      system,
       messages,
       maxTokens: call.maxTokens,
       outputSchema: call.schema,
