@@ -7,15 +7,10 @@ import Fastify, { type FastifyServerOptions } from 'fastify';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 
-export interface Mailer {
-  sendMagicLink(email: string, link: string): Promise<void>;
-}
-
 export interface AppDeps {
-  env: Pick<WebEnv, 'AUTH_SECRET' | 'AUTH_ALLOWED_EMAIL' | 'APP_URL' | 'NODE_ENV'>;
+  env: Pick<WebEnv, 'AUTH_SECRET' | 'AUTH_ALLOWED_EMAIL' | 'AUTH_PASSWORD' | 'NODE_ENV'>;
   pingDb: () => Promise<void>;
   users: UserRepo;
-  mailer: Mailer;
   /** Built front end to serve; omitted in tests and when the web app has not been built. */
   webDist?: string;
   logger?: FastifyServerOptions['logger'];

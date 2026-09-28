@@ -21,13 +21,12 @@ Remaining for done-when: deploy from the Blueprint on Render and confirm migrati
 
 - **Stack:** the spec's recommended stack, since the existing story engine was not available to compare. Revisit if the open questions below change that.
 - **Versions:** TypeScript pinned to 6.0.x because typescript-eslint does not support 7.x yet. Node 24 (`.nvmrc`), pnpm 10 pinned in `packageManager`. Render builds use its preinstalled pnpm (`/usr/bin` is read-only, so `corepack enable` fails there); pnpm switches itself to the pinned version.
-- **Auth:** stateless HMAC-signed magic-link and session tokens (`packages/core/src/auth/tokens.ts`); no token table. Only `AUTH_ALLOWED_EMAIL` can sign in. Links last 15 minutes and can be reused within that window, which is acceptable for a single-user v1.
-- **Email delivery:** none yet. The magic link is written to the web service log (Render Logs). Add a provider (Resend, Postmark, SES) behind the `Mailer` interface when needed.
+- **Auth:** single-user email + password from `AUTH_ALLOWED_EMAIL` and `AUTH_PASSWORD` (Render env vars, never in code), compared in constant time (`packages/core/src/auth/credentials.ts`). Replaced the original magic-link login because v1 has no email provider. Sessions are stateless HMAC-signed cookies lasting 30 days. Login locks for 15 minutes after 5 failures; the lock is global, not per IP, because the client IP behind Render's proxy can be spoofed via forwarded headers. The spec's magic link or OAuth can return later behind the same session cookie.
 - **Queue:** one BullMQ queue (`storyforge`) with the job type as the job name, so the worker has one consumer at concurrency 2. Unknown or not-yet-built job types fail visibly.
 - **Schema:** status enums are defined once in `packages/core` and reused for the Postgres enums. Added `jobs.queue_job_id` (unique) to hold the deterministic BullMQ job id from the Reliability section. `users` and `projects` carry no `project_id`. `payoff_window` is stored as `int4range` and read as text until Phase 5 needs more.
 - **Chapter transitions:** `drafting → playing` and `review → playing/drafting` cover the spec's "revise" paths; `needs_recheck → review/locked` covers re-verification after an unlock. `assembling → writing` lets the author revise flagged chapters.
 - **Migrations:** generated with drizzle-kit into `packages/db/drizzle`, applied by `node packages/db/dist/migrate.js` in the web service's `preDeployCommand`. CI applies them to a clean Postgres 18 and fails if the schema changed without a migration.
-- **Render plans:** `0.5c-512mb` for web and worker (pre-deploy needs a paid instance), `256mb` Key Value (persistent, `noeviction`), `0.1c-256mb` Postgres 18. `AUTH_SECRET` uses `generateValue`. `APP_URL` falls back to Render's `RENDER_EXTERNAL_URL`.
+- **Render plans:** `0.5c-512mb` for web and worker (pre-deploy needs a paid instance), `256mb` Key Value (persistent, `noeviction`), `0.1c-256mb` Postgres 18. `AUTH_SECRET` uses `generateValue`.
 - **Tests:** Vitest at the root, aliased to workspace sources so tests do not need a build.
 
 ## Open questions

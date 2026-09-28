@@ -1,4 +1,10 @@
-import { MAGIC_LINK_TTL_MS, SESSION_TTL_MS, createToken, verifyToken } from '@storyforge/core';
+import {
+  LoginLimiter,
+  SESSION_TTL_MS,
+  checkCredentials,
+  createToken,
+  verifyToken,
+} from '@storyforge/core';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppDeps } from '../app.js';
@@ -21,32 +27,27 @@ export function requireUser(secret: string) {
   };
 }
 
-const requestBody = z.object({ email: z.email() });
-const verifyQuery = z.object({ token: z.string().min(1) });
+const loginBody = z.object({ email: z.string(), password: z.string() });
 
 export const authRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
   const secret = deps.env.AUTH_SECRET;
-  const allowed = deps.env.AUTH_ALLOWED_EMAIL.toLowerCase();
+  const expected = { email: deps.env.AUTH_ALLOWED_EMAIL, password: deps.env.AUTH_PASSWORD };
+  // One global bucket: behind Render's proxy the client IP is not trustworthy, and a
+  // single-user app can afford a short lockout for everyone.
+  const limiter = new LoginLimiter();
+  const LIMIT_KEY = 'login';
 
-  app.post('/auth/request', async (req, reply) => {
-    const parsed = requestBody.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'A valid email is required' });
-    const email = parsed.data.email.toLowerCase();
-    // Same response either way so the endpoint does not reveal the allowed address.
-    if (email === allowed) {
-      const token = createToken('magic', email, secret, MAGIC_LINK_TTL_MS);
-      const link = new URL('/api/auth/verify', deps.env.APP_URL);
-      link.searchParams.set('token', token);
-      await deps.mailer.sendMagicLink(email, link.toString());
+  app.post('/auth/login', async (req, reply) => {
+    if (limiter.isBlocked(LIMIT_KEY)) {
+      return reply.code(429).send({ error: 'Too many attempts. Try again in 15 minutes.' });
     }
-    return { ok: true };
-  });
-
-  app.get('/auth/verify', async (req, reply) => {
-    const parsed = verifyQuery.safeParse(req.query);
-    const email = parsed.success ? verifyToken(parsed.data.token, 'magic', secret) : null;
-    if (!email || email !== allowed) return reply.redirect('/?login=expired');
-    const user = await deps.users.findOrCreateByEmail(email);
+    const parsed = loginBody.safeParse(req.body);
+    if (!parsed.success || !checkCredentials(parsed.data, expected)) {
+      limiter.recordFailure(LIMIT_KEY);
+      return reply.code(401).send({ error: 'Wrong email or password' });
+    }
+    limiter.reset(LIMIT_KEY);
+    const user = await deps.users.findOrCreateByEmail(expected.email.trim().toLowerCase());
     reply.setCookie(SESSION_COOKIE, createToken('session', user.id, secret, SESSION_TTL_MS), {
       path: '/',
       httpOnly: true,
@@ -54,7 +55,7 @@ export const authRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
       secure: deps.env.NODE_ENV === 'production',
       maxAge: SESSION_TTL_MS / 1000,
     });
-    return reply.redirect('/');
+    return { ok: true };
   });
 
   app.post('/auth/logout', async (_req, reply) => {

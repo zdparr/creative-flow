@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-// Stateless HMAC-signed tokens for the single-user magic-link login and session cookie.
+// Stateless HMAC-signed tokens for the session cookie.
 // Format: base64url(JSON payload) + "." + base64url(HMAC-SHA256).
 
-type TokenKind = 'magic' | 'session';
+type TokenKind = 'session';
 
 interface TokenPayload {
   kind: TokenKind;
@@ -11,7 +11,6 @@ interface TokenPayload {
   exp: number;
 }
 
-export const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function sign(data: string, secret: string): string {

@@ -10,7 +10,7 @@ const webEnv = baseEnv.extend({
   PORT: z.coerce.number().int().default(3000),
   AUTH_SECRET: z.string().min(32, 'AUTH_SECRET must be at least 32 characters'),
   AUTH_ALLOWED_EMAIL: z.email(),
-  APP_URL: z.url(),
+  AUTH_PASSWORD: z.string().min(12, 'AUTH_PASSWORD must be at least 12 characters'),
 });
 
 export type BaseEnv = z.infer<typeof baseEnv>;
@@ -25,6 +25,4 @@ function parse<T extends z.ZodType>(schema: T, source: NodeJS.ProcessEnv): z.inf
 }
 
 export const loadWorkerEnv = (source = process.env): BaseEnv => parse(baseEnv, source);
-export const loadWebEnv = (source = process.env): WebEnv =>
-  // Render sets RENDER_EXTERNAL_URL on web services, so APP_URL is optional there.
-  parse(webEnv, { ...source, APP_URL: source.APP_URL || source.RENDER_EXTERNAL_URL });
+export const loadWebEnv = (source = process.env): WebEnv => parse(webEnv, source);

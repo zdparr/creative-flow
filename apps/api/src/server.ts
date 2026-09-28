@@ -13,12 +13,6 @@ const app = await buildApp({
     await sql`select 1`;
   },
   users: createUserRepo(db),
-  // v1 has no email provider: the link goes to the service log. See PLAN.md.
-  mailer: {
-    async sendMagicLink(email, link) {
-      app.log.info({ email, link }, 'magic link');
-    },
-  },
   webDist: resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist'),
   logger: env.NODE_ENV === 'production' ? true : { level: 'info' },
 });

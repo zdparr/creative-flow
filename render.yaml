@@ -20,8 +20,10 @@ services:
         fromDatabase: { name: storyforge-db, property: connectionString }
       - key: REDIS_URL
         fromService: { type: keyvalue, name: storyforge-kv, property: connectionString }
-      # The one author allowed to sign in (v1 is single-user).
+      # The one author's login (v1 is single-user). Set both in the Render dashboard.
       - key: AUTH_ALLOWED_EMAIL
+        sync: false
+      - key: AUTH_PASSWORD
         sync: false
       - fromGroup: storyforge-shared
 
