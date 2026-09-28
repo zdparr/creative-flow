@@ -7,7 +7,7 @@ services:
     name: storyforge-web
     runtime: node
     plan: 0.5c-512mb
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     # Migrations run here, never from the worker.
     preDeployCommand: node packages/db/dist/migrate.js
     startCommand: node apps/api/dist/server.js
@@ -29,7 +29,7 @@ services:
     name: storyforge-worker
     runtime: node
     plan: 0.5c-512mb
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     startCommand: node apps/worker/dist/index.js
     autoDeployTrigger: checksPass
     envVars:

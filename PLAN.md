@@ -20,7 +20,7 @@ Remaining for done-when: deploy from the Blueprint on Render and confirm migrati
 ## Decisions
 
 - **Stack:** the spec's recommended stack, since the existing story engine was not available to compare. Revisit if the open questions below change that.
-- **Versions:** TypeScript pinned to 6.0.x because typescript-eslint does not support 7.x yet. Node 24 (`.nvmrc`), pnpm 10 via corepack.
+- **Versions:** TypeScript pinned to 6.0.x because typescript-eslint does not support 7.x yet. Node 24 (`.nvmrc`), pnpm 10 pinned in `packageManager`. Render builds use its preinstalled pnpm (`/usr/bin` is read-only, so `corepack enable` fails there); pnpm switches itself to the pinned version.
 - **Auth:** stateless HMAC-signed magic-link and session tokens (`packages/core/src/auth/tokens.ts`); no token table. Only `AUTH_ALLOWED_EMAIL` can sign in. Links last 15 minutes and can be reused within that window, which is acceptable for a single-user v1.
 - **Email delivery:** none yet. The magic link is written to the web service log (Render Logs). Add a provider (Resend, Postmark, SES) behind the `Mailer` interface when needed.
 - **Queue:** one BullMQ queue (`storyforge`) with the job type as the job name, so the worker has one consumer at concurrency 2. Unknown or not-yet-built job types fail visibly.
@@ -40,4 +40,4 @@ From the spec:
 
 From the build:
 
-- If Render's build image rejects `corepack enable`, switch the build command to `npm i -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build`.
+- If Render's preinstalled pnpm fails to honor `packageManager`, switch the build command to `npx --yes pnpm@10.34.5 install --frozen-lockfile && npx --yes pnpm@10.34.5 build`.
