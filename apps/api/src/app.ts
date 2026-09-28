@@ -2,15 +2,17 @@ import { existsSync } from 'node:fs';
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import type { WebEnv } from '@storyforge/core';
-import type { UserRepo } from '@storyforge/db';
+import type { ServiceContext } from '@storyforge/services';
 import Fastify, { type FastifyServerOptions } from 'fastify';
+import { errorHandler } from './errors.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
+import { projectRoutes } from './routes/projects.js';
 
 export interface AppDeps {
   env: Pick<WebEnv, 'AUTH_SECRET' | 'AUTH_ALLOWED_EMAIL' | 'AUTH_PASSWORD' | 'NODE_ENV'>;
   pingDb: () => Promise<void>;
-  users: UserRepo;
+  services: ServiceContext;
   /** Built front end to serve; omitted in tests and when the web app has not been built. */
   webDist?: string;
   logger?: FastifyServerOptions['logger'];
@@ -19,11 +21,13 @@ export interface AppDeps {
 export async function buildApp(deps: AppDeps) {
   const app = Fastify({ logger: deps.logger ?? false });
   await app.register(fastifyCookie);
+  app.setErrorHandler(errorHandler);
 
   await app.register(
     async (api) => {
       await api.register(healthRoutes, deps);
       await api.register(authRoutes, deps);
+      await api.register(projectRoutes, deps);
     },
     { prefix: '/api' },
   );

@@ -1,16 +1,18 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
-const src = (pkg: string) =>
-  fileURLToPath(new URL(`./packages/${pkg}/src/index.ts`, import.meta.url));
+const path = (file: string) => fileURLToPath(new URL(`./packages/${file}`, import.meta.url));
 
 export default defineConfig({
   resolve: {
     // Test against workspace sources so tests do not depend on a prior build.
-    alias: {
-      '@storyforge/core': src('core'),
-      '@storyforge/db': src('db'),
-    },
+    alias: [
+      { find: '@storyforge/core/testing', replacement: path('core/src/testing/index.ts') },
+      { find: '@storyforge/db/testing', replacement: path('db/src/testing.ts') },
+      { find: '@storyforge/core', replacement: path('core/src/index.ts') },
+      { find: '@storyforge/db', replacement: path('db/src/index.ts') },
+      { find: '@storyforge/services', replacement: path('services/src/index.ts') },
+    ],
   },
   test: {
     include: ['{apps,packages}/*/src/**/*.test.ts'],

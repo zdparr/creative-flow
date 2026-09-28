@@ -12,6 +12,7 @@
   "dependencies": {
     "@storyforge/core": "workspace:*",
     "@storyforge/db": "workspace:*",
+    "@storyforge/services": "workspace:*",
     "bullmq": "^6.3.9",
     "ioredis": "^6.0.0"
   }

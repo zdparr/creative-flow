@@ -15,7 +15,10 @@
     "@fastify/static": "^10.1.5",
     "@storyforge/core": "workspace:*",
     "@storyforge/db": "workspace:*",
+    "@storyforge/services": "workspace:*",
+    "bullmq": "^6.3.9",
     "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
     "zod": "^4.6.5"
   }
 }

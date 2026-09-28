@@ -67,6 +67,9 @@ envVarGroups:
         value: claude-sonnet-5
       - key: MODEL_STRONG
         value: claude-opus-5-5
+      # Constrained JSON output; leave off until every configured model supports it.
+      - key: STRUCTURED_OUTPUTS
+        value: 'false'
       - key: S3_BUCKET
         sync: false
       - key: AWS_ACCESS_KEY_ID

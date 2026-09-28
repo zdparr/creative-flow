@@ -4,6 +4,14 @@ const baseEnv = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
+  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required for model calls'),
+  MODEL_FAST: z.string().default('claude-sonnet-5'),
+  MODEL_STRONG: z.string().default('claude-opus-5-5'),
+  // Constrained JSON output (output_config.format). Off until every configured model supports it.
+  STRUCTURED_OUTPUTS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 const webEnv = baseEnv.extend({

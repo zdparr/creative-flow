@@ -1,6 +1,9 @@
 import { type FormEvent, useEffect, useState } from 'react';
+import { ProjectPage } from './pages/Project.js';
+import { ProjectsPage } from './pages/Projects.js';
+import { match, navigate, usePath } from './router.js';
+import type { Me } from './types.js';
 
-type Me = { id: string; email: string; displayName: string | null };
 type State = { kind: 'loading' } | { kind: 'signedOut' } | { kind: 'signedIn'; me: Me };
 
 export function App() {
@@ -19,7 +22,42 @@ export function App() {
   if (state.kind === 'loading') return null;
   if (state.kind === 'signedOut')
     return <Login onSignIn={(me) => setState({ kind: 'signedIn', me })} />;
-  return <Projects me={state.me} onSignOut={() => setState({ kind: 'signedOut' })} />;
+
+  async function signOut() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setState({ kind: 'signedOut' });
+  }
+
+  return (
+    <>
+      <header className="topbar">
+        <a
+          href="/"
+          className="brand"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate('/');
+          }}
+        >
+          Story Forge
+        </a>
+        <span className="muted">
+          {state.me.email}{' '}
+          <button className="quiet" onClick={signOut}>
+            Sign out
+          </button>
+        </span>
+      </header>
+      <Routes />
+    </>
+  );
+}
+
+function Routes() {
+  const path = usePath();
+  const project = match('/projects/:id', path) ?? match('/projects/:id/:tab', path);
+  if (project) return <ProjectPage id={project.id!} tab={project.tab} />;
+  return <ProjectsPage />;
 }
 
 function Login({ onSignIn }: { onSignIn: (me: Me) => void }) {
@@ -55,7 +93,7 @@ function Login({ onSignIn }: { onSignIn: (me: Me) => void }) {
   return (
     <main className="shell narrow">
       <h1>Story Forge</h1>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} className="stack">
         <label htmlFor="email">Email</label>
         <input
           id="email"
@@ -79,25 +117,6 @@ function Login({ onSignIn }: { onSignIn: (me: Me) => void }) {
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-    </main>
-  );
-}
-
-function Projects({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
-  async function signOut() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    onSignOut();
-  }
-
-  return (
-    <main className="shell">
-      <header className="bar">
-        <h1>Story Forge</h1>
-        <span>
-          {me.email} <button onClick={signOut}>Sign out</button>
-        </span>
-      </header>
-      <p className="muted">No books yet. Pitching a new book arrives in Phase 2.</p>
     </main>
   );
 }

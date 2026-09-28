@@ -47,7 +47,9 @@ export const authRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
       return reply.code(401).send({ error: 'Wrong email or password' });
     }
     limiter.reset(LIMIT_KEY);
-    const user = await deps.users.findOrCreateByEmail(expected.email.trim().toLowerCase());
+    const user = await deps.services.repos.users.findOrCreateByEmail(
+      expected.email.trim().toLowerCase(),
+    );
     reply.setCookie(SESSION_COOKIE, createToken('session', user.id, secret, SESSION_TTL_MS), {
       path: '/',
       httpOnly: true,
@@ -64,7 +66,7 @@ export const authRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
   });
 
   app.get('/me', { preHandler: requireUser(secret) }, async (req, reply) => {
-    const user = await deps.users.findById(req.userId!);
+    const user = await deps.services.repos.users.findById(req.userId!);
     if (!user) return reply.code(401).send({ error: 'Not signed in' });
     return user;
   });

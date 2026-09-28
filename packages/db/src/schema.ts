@@ -1,4 +1,11 @@
 import {
+  type ChapterPromises,
+  type InterviewAnswer,
+  type InterviewQuestion,
+  type OutlineChapter,
+  type Spine,
+  type StyleGuide,
+  type World,
   CHAPTER_STATUSES,
   CHARACTER_STATUSES,
   CHARACTER_TIERS,
@@ -93,8 +100,8 @@ export const interviewRounds = pgTable(
     id: id(),
     projectId: projectId(),
     roundNo: integer('round_no').notNull(),
-    questions: jsonb('questions').notNull(),
-    answers: jsonb('answers'),
+    questions: jsonb('questions').$type<InterviewQuestion[]>().notNull(),
+    answers: jsonb('answers').$type<InterviewAnswer[]>(),
     ...timestamps(),
   },
   (t) => [uniqueIndex('interview_rounds_project_round_uq').on(t.projectId, t.roundNo)],
@@ -106,9 +113,9 @@ export const bibles = pgTable(
     id: id(),
     projectId: projectId(),
     version: integer('version').notNull(),
-    spine: jsonb('spine').notNull(),
-    world: jsonb('world').notNull(),
-    styleGuide: jsonb('style_guide').notNull(),
+    spine: jsonb('spine').$type<Spine>().notNull(),
+    world: jsonb('world').$type<World>().notNull(),
+    styleGuide: jsonb('style_guide').$type<StyleGuide>().notNull(),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     ...timestamps(),
   },
@@ -138,10 +145,15 @@ export const outlineChapters = pgTable(
     number: integer('number').notNull(),
     title: text('title').notNull(),
     purpose: text('purpose').notNull(),
-    requiredBeats: jsonb('required_beats').notNull(),
-    arcsMoved: jsonb('arcs_moved').notNull(),
+    requiredBeats: jsonb('required_beats').$type<OutlineChapter['requiredBeats']>().notNull(),
+    arcsMoved: jsonb('arcs_moved').$type<OutlineChapter['arcsMoved']>().notNull(),
     isAnchor: boolean('is_anchor').notNull().default(false),
-    anchorType: text('anchor_type'),
+    anchorType: text('anchor_type').$type<OutlineChapter['anchorType']>(),
+    // Promises planted and paid in this chapter, per the outliner's plan.
+    promises: jsonb('promises')
+      .$type<ChapterPromises>()
+      .notNull()
+      .default({ planted: [], paid: [] }),
     ...timestamps(),
   },
   (t) => [uniqueIndex('outline_chapters_outline_number_uq').on(t.outlineId, t.number)],
@@ -358,11 +370,10 @@ export const jobs = pgTable(
   {
     id: id(),
     projectId: projectId(),
+    // The row id doubles as the BullMQ job id, so a retried enqueue never runs twice.
     type: text('type').notNull(),
-    // Deterministic BullMQ job id, e.g. chapter.novelize:<chapterId>:<requestSeq>.
-    queueJobId: text('queue_job_id').notNull().unique(),
     status: jobStatus('status').notNull().default('queued'),
-    input: jsonb('input').notNull(),
+    input: jsonb('input').$type<Record<string, unknown>>().notNull(),
     resultRef: text('result_ref'),
     attempts: integer('attempts').notNull().default(0),
     error: text('error'),
