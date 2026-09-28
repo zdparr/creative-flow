@@ -527,3 +527,20 @@ details > summary {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+a.button {
+  display: inline-block;
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a.button.quiet {
+  border-color: var(--border);
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 0.9rem;
+}

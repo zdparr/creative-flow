@@ -1,5 +1,6 @@
 import type { Db } from './client.js';
 import { createBibleRepo } from './repositories/bibles.js';
+import { createDraftRepo } from './repositories/drafts.js';
 import { createInterviewRepo } from './repositories/interview.js';
 import { createJobRepo, createLlmCallRepo } from './repositories/jobs.js';
 import { createOutlineRepo } from './repositories/outlines.js';
@@ -9,6 +10,7 @@ import { createUserRepo } from './repositories/users.js';
 
 export * from './client.js';
 export * from './repositories/bibles.js';
+export * from './repositories/drafts.js';
 export * from './repositories/interview.js';
 export * from './repositories/jobs.js';
 export * from './repositories/outlines.js';
@@ -29,6 +31,7 @@ export function createRepos(db: Db) {
     chapters: createChapterRepo(db),
     play: createPlayRepo(db),
     characters: createCharacterRepo(db),
+    drafts: createDraftRepo(db),
   };
 }
 export type Repos = ReturnType<typeof createRepos>;

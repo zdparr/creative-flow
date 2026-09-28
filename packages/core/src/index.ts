@@ -10,6 +10,7 @@ export * from './domain/errors.js';
 export * from './domain/status.js';
 export * from './domain/transitions.js';
 export * from './domain/validation.js';
+export * from './export/chapterDocx.js';
 export * from './llm/client.js';
 export * from './llm/pricing.js';
 export * from './llm/runAgent.js';

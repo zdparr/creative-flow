@@ -36,6 +36,11 @@ export function ChaptersScreen({ project }: { project: Project }) {
               <strong>{c.title}</strong>
               <span className="badge">{humanize(c.status)}</span>
               <span className="reorder">
+                {c.status === 'locked' && (
+                  <a className="button quiet" href={`/api/chapters/${c.id}/download.docx`} download>
+                    Download .docx
+                  </a>
+                )}
                 <button
                   disabled={!canOpen}
                   title={canOpen ? undefined : 'The previous chapter must be locked first'}

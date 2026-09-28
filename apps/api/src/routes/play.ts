@@ -1,6 +1,7 @@
 import { NotFoundError } from '@storyforge/core';
 import {
   endChapter,
+  exportChapterDocx,
   getPlayState,
   reopenChapter,
   retryTurn,
@@ -93,6 +94,18 @@ export const playRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
     const chapter = await loadChapter(req);
     await endChapter(services, chapter.id);
     return getPlayState(services, chapter.id);
+  });
+
+  app.get<ChapterParams>('/chapters/:id/download.docx', async (req, reply) => {
+    const chapter = await loadChapter(req);
+    const { fileName, buffer } = await exportChapterDocx(services, chapter.id);
+    return reply
+      .header(
+        'content-type',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      )
+      .header('content-disposition', `attachment; filename="${fileName}"`)
+      .send(buffer);
   });
 
   app.post<ChapterParams>('/chapters/:id/reopen', async (req) => {

@@ -10,6 +10,7 @@ import {
   sampleTurnExtraction,
   sampleTurnNarration,
 } from '@storyforge/core/testing';
+import { schema } from '@storyforge/db';
 import { createTestDb } from '@storyforge/db/testing';
 import {
   type Enqueue,
@@ -17,6 +18,8 @@ import {
   createServiceContext,
   generateOutline,
 } from '@storyforge/services';
+import { eq } from 'drizzle-orm';
+import JSZip from 'jszip';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type AppDeps, buildApp } from './app.js';
 
@@ -293,5 +296,63 @@ describe('play API', () => {
     const { call } = await signedIn();
     const { chapters } = await writingProject('someone@else.com');
     expect((await call('GET', `/chapters/${chapters[0]!.id}`)).statusCode).toBe(404);
+  });
+});
+
+describe('chapter download', () => {
+  /** Chapter 1 locked with a final draft, and play data that must not leak into the file. */
+  async function lockedChapter(ownerEmail = credentials.email) {
+    const { project, chapters } = await writingProject(ownerEmail);
+    const chapter = chapters[0]!;
+    await services.repos.play.addTurn({
+      projectId: project.id,
+      chapterId: chapter.id,
+      role: 'author',
+      inputKind: 'author_note',
+      content: 'AUTHOR-NOTE-SHOULD-NOT-APPEAR',
+    });
+    await services.db.insert(schema.chapterDrafts).values({
+      projectId: project.id,
+      chapterId: chapter.id,
+      version: 1,
+      prose: 'The tide came in the way it always had.\n\nShe read the date twice.',
+      wordCount: 15,
+      isCurrent: true,
+    });
+    await services.db
+      .update(schema.chapters)
+      .set({ status: 'locked', lockedAt: new Date() })
+      .where(eq(schema.chapters.id, chapter.id));
+    return { project, chapter, next: chapters[1]! };
+  }
+
+  it('downloads a locked chapter as a Word file with prose only', async () => {
+    const { call } = await signedIn();
+    const { chapter } = await lockedChapter();
+    const res = await call('GET', `/chapters/${chapter.id}/download.docx`);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('wordprocessingml');
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="the-tide-letters-chapter-01.docx"',
+    );
+    const zip = await JSZip.loadAsync(res.rawPayload);
+    const xml = await zip.file('word/document.xml')!.async('string');
+    expect(xml).toContain('New Moon');
+    expect(xml).toContain('She read the date twice.');
+    expect(xml).not.toContain('AUTHOR-NOTE-SHOULD-NOT-APPEAR');
+  });
+
+  it('refuses chapters that are not locked', async () => {
+    const { call } = await signedIn();
+    const { next } = await lockedChapter();
+    const res = await call('GET', `/chapters/${next.id}/download.docx`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('Only locked chapters can be downloaded');
+  });
+
+  it("hides other users' chapters", async () => {
+    const { call } = await signedIn();
+    const { chapter } = await lockedChapter('someone@else.com');
+    expect((await call('GET', `/chapters/${chapter.id}/download.docx`)).statusCode).toBe(404);
   });
 });

@@ -54,6 +54,13 @@ Remaining for done-when: play one chapter on Render against the live models.
 - **Order and ending:** chapters are played in order (chapter N needs N-1 locked). Ending moves the chapter to `drafting`; until Phase 5 adds novelizing, "Return to play" moves it back. A failed director response leaves the author's turn in place with a retry button.
 - **Swappable protagonist:** the play loop takes a `ProtagonistInput` from its caller. Today that is the author; later it can be an agent seeded with the protagonist's card.
 
+### Chapter download (requested 2026-09-28)
+
+- **What:** a locked chapter downloads as a Word file (`GET /api/chapters/:id/download.docx`, a "Download .docx" button on the Chapters tab). It holds the chapter's current approved draft only: no turns, author notes, interiority notes, or chronicle.
+- **When:** only `locked` chapters are final, so the button appears once Phase 5's novelize, review, and lock flow has run on a chapter.
+- **Format:** standard manuscript format: Times New Roman 12pt, double-spaced, one-inch margins, half-inch first-line indents (none after the heading or a scene break), chapter heading a third of the way down the page, and `***`/`* * *`/`#` scene breaks rendered as a centered `#`. Built with the `docx` package in `packages/core/src/export/chapterDocx.ts`.
+- **Delivery:** generated on request and streamed back, not stored. The spec's S3-backed `exports` table is for whole-book exports in Phase 7.
+
 ## Open questions
 
 From the spec:
