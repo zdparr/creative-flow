@@ -3,6 +3,7 @@ import { createBibleRepo } from './repositories/bibles.js';
 import { createInterviewRepo } from './repositories/interview.js';
 import { createJobRepo, createLlmCallRepo } from './repositories/jobs.js';
 import { createOutlineRepo } from './repositories/outlines.js';
+import { createChapterRepo, createCharacterRepo, createPlayRepo } from './repositories/play.js';
 import { createProjectRepo } from './repositories/projects.js';
 import { createUserRepo } from './repositories/users.js';
 
@@ -11,6 +12,7 @@ export * from './repositories/bibles.js';
 export * from './repositories/interview.js';
 export * from './repositories/jobs.js';
 export * from './repositories/outlines.js';
+export * from './repositories/play.js';
 export * from './repositories/projects.js';
 export * from './repositories/users.js';
 export * as schema from './schema.js';
@@ -24,6 +26,9 @@ export function createRepos(db: Db) {
     outlines: createOutlineRepo(db),
     jobs: createJobRepo(db),
     llmCalls: createLlmCallRepo(db),
+    chapters: createChapterRepo(db),
+    play: createPlayRepo(db),
+    characters: createCharacterRepo(db),
   };
 }
 export type Repos = ReturnType<typeof createRepos>;

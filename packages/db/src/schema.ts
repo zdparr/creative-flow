@@ -1,5 +1,6 @@
 import {
   type ChapterPromises,
+  type ChronicleExtraction,
   type InterviewAnswer,
   type InterviewQuestion,
   type OutlineChapter,
@@ -181,6 +182,8 @@ export const chapters = pgTable(
     }),
     status: chapterStatus('status').notNull().default('planned'),
     summary: text('summary'),
+    // Beat ids the author marked as hit by hand (the beat tracker's override).
+    manualBeats: text('manual_beats').array().notNull().default([]),
     lockedAt: timestamp('locked_at', { withTimezone: true }),
     lockedSnapshotId: uuid('locked_snapshot_id').references((): AnyPgColumn => snapshots.id, {
       onDelete: 'set null',
@@ -224,6 +227,11 @@ export const chronicleEvents = pgTable(
     beatIds: text('beat_ids').array().notNull().default([]),
     interiorityNote: text('interiority_note'),
     isCanon: boolean('is_canon').notNull().default(true),
+    // Candidate facts, promises, and characters; pending until the chapter lock commits them.
+    extracted: jsonb('extracted')
+      .$type<ChronicleExtraction>()
+      .notNull()
+      .default({ facts: [], promises: [], newCharacters: [] }),
     ...timestamps(),
   },
   (t) => [uniqueIndex('chronicle_events_chapter_seq_uq').on(t.chapterId, t.seq)],

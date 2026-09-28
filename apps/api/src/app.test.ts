@@ -3,8 +3,12 @@ import {
   sampleBible,
   sampleInterviewBible,
   sampleInterviewRound,
+  sampleOpening,
+  sampleOpeningExtraction,
   sampleOutline,
   samplePitch,
+  sampleTurnExtraction,
+  sampleTurnNarration,
 } from '@storyforge/core/testing';
 import { createTestDb } from '@storyforge/db/testing';
 import {
@@ -205,5 +209,89 @@ describe('project API', () => {
     const res = await call('POST', `/projects/${id}/interview/next`);
     expect(res.statusCode).toBe(502);
     expect(res.json().error).toContain('unusable answer');
+  });
+});
+
+/** Seeds a project in the writing stage owned by the signed-in author. */
+async function writingProject(ownerEmail = credentials.email) {
+  const repos = services.repos;
+  const user = await repos.users.findOrCreateByEmail(ownerEmail);
+  const project = await repos.projects.create(user.id, samplePitch, sampleBible.title);
+  const bible = await repos.bibles.createVersion(project.id, {
+    spine: sampleBible.spine,
+    world: sampleBible.world,
+    styleGuide: sampleBible.styleGuide,
+  });
+  await repos.bibles.markApproved(bible.id);
+  const outline = await repos.outlines.createVersion(project.id, sampleOutline.chapters);
+  await repos.outlines.markApproved(outline.outline.id);
+  await repos.outlines.createChapters(project.id, outline);
+  await repos.projects.transition(project.id, 'intake', 'bible_review');
+  await repos.projects.transition(project.id, 'bible_review', 'outline_review');
+  await repos.projects.transition(project.id, 'outline_review', 'writing');
+  return { project, chapters: await repos.chapters.listForProject(project.id) };
+}
+
+/** Parses an SSE body into [event, data] pairs. */
+function sseEvents(body: string) {
+  return body
+    .split('\n\n')
+    .filter(Boolean)
+    .map((frame) => {
+      const event = /^event: (.*)$/m.exec(frame)?.[1];
+      const data = /^data: (.*)$/m.exec(frame)?.[1];
+      return [event, data ? JSON.parse(data) : null] as const;
+    });
+}
+
+describe('play API', () => {
+  it('streams a chapter opening and a turn as server-sent events', async () => {
+    const { call } = await signedIn();
+    const { project, chapters } = await writingProject();
+    const listed = (await call('GET', `/projects/${project.id}/chapters`)).json();
+    expect(listed.map((c: { title: string }) => c.title)[0]).toBe('New Moon');
+
+    llm.push(sampleOpening, sampleOpeningExtraction);
+    const opening = await call('POST', `/chapters/${chapters[0]!.id}/start`);
+    expect(opening.headers['content-type']).toContain('text/event-stream');
+    const events = sseEvents(opening.body);
+    expect(events.map(([e]) => e)).toEqual(['delta', 'delta', 'turn', 'chronicle', 'done']);
+    expect(events[0]![1]).toEqual({ text: sampleOpening.stream[0] });
+
+    llm.push(sampleTurnNarration, sampleTurnExtraction);
+    const turn = await call('POST', `/chapters/${chapters[0]!.id}/turns`, {
+      kind: 'in_character',
+      text: 'I go down to the water.',
+    });
+    expect(sseEvents(turn.body).at(-1)![0]).toBe('done');
+
+    const state = (await call('GET', `/chapters/${chapters[0]!.id}`)).json();
+    expect(state.canEnd).toBe(true);
+    const ended = await call('POST', `/chapters/${chapters[0]!.id}/end`);
+    expect(ended.json().chapter.status).toBe('drafting');
+  });
+
+  it('answers with a JSON error, not a stream, when a turn is refused up front', async () => {
+    const { call } = await signedIn();
+    const { chapters } = await writingProject();
+    const res = await call('POST', `/chapters/${chapters[1]!.id}/start`);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error).toContain('Chapter 1 must be locked');
+  });
+
+  it('finishes the stream with a warning when the chronicle step fails', async () => {
+    const { call } = await signedIn();
+    const { chapters } = await writingProject();
+    llm.push({ stream: ['The lamp '] }); // then the extractor has no response: a warning, not an error
+    const res = await call('POST', `/chapters/${chapters[0]!.id}/start`);
+    const kinds = sseEvents(res.body).map(([e]) => e);
+    expect(kinds).toContain('warning');
+    expect(kinds.at(-1)).toBe('done');
+  });
+
+  it("hides other users' chapters", async () => {
+    const { call } = await signedIn();
+    const { chapters } = await writingProject('someone@else.com');
+    expect((await call('GET', `/chapters/${chapters[0]!.id}`)).statusCode).toBe(404);
   });
 });

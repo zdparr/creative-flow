@@ -1,0 +1,2 @@
+ALTER TABLE "chapters" ADD COLUMN "manual_beats" text[] DEFAULT '{}' NOT NULL;--> statement-breakpoint
+ALTER TABLE "chronicle_events" ADD COLUMN "extracted" jsonb DEFAULT '{"facts":[],"promises":[],"newCharacters":[]}'::jsonb NOT NULL;

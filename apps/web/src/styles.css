@@ -400,3 +400,130 @@ fieldset.list {
 details > summary {
   cursor: pointer;
 }
+
+/* ---------- play ---------- */
+
+.play {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 16px 64px;
+}
+
+@media (max-width: 860px) {
+  .play {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.story {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+.story-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.story-head h1 {
+  margin: 0;
+}
+
+.pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px clamp(16px, 4vw, 48px);
+  font-size: 1.1rem;
+  line-height: 1.7;
+  min-height: 40vh;
+}
+
+.narration p {
+  margin: 0 0 1em;
+}
+
+.narration.streaming p:last-of-type::after {
+  content: '▍';
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+.player-move {
+  margin: 0 0 1em;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+  font-style: italic;
+}
+
+.author-note {
+  margin: 0 0 1em;
+  font-size: 0.9rem;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+}
+
+.composer {
+  display: grid;
+  gap: 8px;
+}
+
+.small-print {
+  font-size: 0.85rem;
+}
+
+.side {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.side h2 {
+  font-size: 1rem;
+}
+
+.beats,
+.plain,
+.chronicle {
+  margin: 0 0 8px;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.chronicle {
+  list-style: decimal;
+  padding-left: 20px;
+  font-size: 0.95rem;
+}
+
+.chronicle .quiet {
+  margin-left: 6px;
+  padding: 0 6px;
+}
+
+.struck {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.inline-heading {
+  display: inline;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

@@ -4,10 +4,11 @@ import { ErrorNote, STATUS_LABELS } from '../components.js';
 import { navigate } from '../router.js';
 import type { Project, ProjectStatus } from '../types.js';
 import { BibleScreen } from './Bible.js';
+import { ChaptersScreen } from './Chapters.js';
 import { InterviewScreen } from './Interview.js';
 import { OutlineScreen } from './Outline.js';
 
-type Tab = 'interview' | 'bible' | 'outline';
+type Tab = 'interview' | 'bible' | 'outline' | 'chapters';
 
 const ORDER: ProjectStatus[] = [
   'intake',
@@ -24,7 +25,8 @@ const reached = (status: ProjectStatus, target: ProjectStatus) =>
 function defaultTab(status: ProjectStatus): Tab {
   if (status === 'intake') return 'interview';
   if (status === 'bible_review') return 'bible';
-  return 'outline';
+  if (status === 'outline_review') return 'outline';
+  return 'chapters';
 }
 
 export function ProjectPage({ id, tab }: { id: string; tab?: string }) {
@@ -52,11 +54,14 @@ export function ProjectPage({ id, tab }: { id: string; tab?: string }) {
   if (!project) return null;
 
   const active: Tab =
-    tab === 'interview' || tab === 'bible' || tab === 'outline' ? tab : defaultTab(project.status);
+    tab === 'interview' || tab === 'bible' || tab === 'outline' || tab === 'chapters'
+      ? tab
+      : defaultTab(project.status);
   const tabs: { key: Tab; label: string; enabled: boolean }[] = [
     { key: 'interview', label: 'Interview', enabled: true },
     { key: 'bible', label: 'Bible', enabled: reached(project.status, 'bible_review') },
     { key: 'outline', label: 'Outline', enabled: reached(project.status, 'outline_review') },
+    { key: 'chapters', label: 'Chapters', enabled: reached(project.status, 'writing') },
   ];
 
   return (
@@ -81,13 +86,10 @@ export function ProjectPage({ id, tab }: { id: string; tab?: string }) {
         </nav>
       </div>
 
-      {project.status === 'writing' && active === 'outline' && (
-        <p className="notice">Outline approved. Playing chapters arrives in Phase 3.</p>
-      )}
-
       {active === 'interview' && <InterviewScreen project={project} onAdvance={reload} />}
       {active === 'bible' && <BibleScreen project={project} onChange={reload} />}
       {active === 'outline' && <OutlineScreen project={project} onChange={reload} />}
+      {active === 'chapters' && <ChaptersScreen project={project} />}
     </main>
   );
 }

@@ -62,3 +62,51 @@ export interface OutlineView {
     error: string | null;
   } | null;
 }
+
+export type ChapterStatus =
+  'planned' | 'playing' | 'drafting' | 'review' | 'locked' | 'needs_recheck';
+
+export interface ChapterListItem {
+  id: string;
+  number: number;
+  status: ChapterStatus;
+  title: string | null;
+  purpose: string | null;
+}
+
+export interface Beat {
+  id: string;
+  description: string;
+  hit: boolean;
+  source: 'play' | 'author' | null;
+}
+
+export interface Turn {
+  id: string;
+  seq: number;
+  role: 'author' | 'director' | 'npc';
+  inputKind: 'in_character' | 'author_note' | null;
+  content: string;
+}
+
+export interface ChronicleEntry {
+  id: string;
+  seq: number;
+  summary: string;
+  isCanon: boolean;
+  beatIds: string[];
+  interiorityNote: string | null;
+}
+
+export interface PlayState {
+  chapter: { id: string; number: number; status: ChapterStatus };
+  project: { id: string; title: string; status: ProjectStatus };
+  plan: OutlineChapter;
+  turns: Turn[];
+  chronicle: ChronicleEntry[];
+  beats: Beat[];
+  canEnd: boolean;
+  awaitingResponse: boolean;
+  sceneCharacters: { id: string; name: string; tier: string; status: string }[];
+  openPromises: { description: string; plantedChapter: number; payoffChapter: number }[];
+}

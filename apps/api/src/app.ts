@@ -7,6 +7,7 @@ import Fastify, { type FastifyServerOptions } from 'fastify';
 import { errorHandler } from './errors.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
+import { playRoutes } from './routes/play.js';
 import { projectRoutes } from './routes/projects.js';
 
 export interface AppDeps {
@@ -28,6 +29,7 @@ export async function buildApp(deps: AppDeps) {
       await api.register(healthRoutes, deps);
       await api.register(authRoutes, deps);
       await api.register(projectRoutes, deps);
+      await api.register(playRoutes, deps);
     },
     { prefix: '/api' },
   );

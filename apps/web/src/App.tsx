@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react';
+import { PlayScreen } from './pages/Play.js';
 import { ProjectPage } from './pages/Project.js';
 import { ProjectsPage } from './pages/Projects.js';
 import { match, navigate, usePath } from './router.js';
@@ -55,6 +56,8 @@ export function App() {
 
 function Routes() {
   const path = usePath();
+  const play = match('/projects/:id/play/:chapterId', path);
+  if (play) return <PlayScreen projectId={play.id!} chapterId={play.chapterId!} />;
   const project = match('/projects/:id', path) ?? match('/projects/:id/:tab', path);
   if (project) return <ProjectPage id={project.id!} tab={project.tab} />;
   return <ProjectsPage />;

@@ -3,6 +3,8 @@
 import type { BibleContent } from '../schemas/bible.js';
 import type { InterviewerOutput } from '../schemas/interview.js';
 import type { OutlinerOutput } from '../schemas/outline.js';
+import type { ExtractorOutput, NpcVoiceOutput } from '../schemas/play.js';
+import type { FakeStream } from './fakeLlm.js';
 
 export const samplePitch =
   'A lighthouse keeper on a drowned coast finds letters in bottles addressed to her dead sister, written in the future.';
@@ -180,4 +182,65 @@ export const sampleOutline: OutlinerOutput = {
       promises: { planted: [], paid: ['The final letter is sealed.'] },
     },
   ],
+};
+
+// ---------- play (chapter 1 of the sample outline) ----------
+
+export const sampleOpening: FakeStream = {
+  stream: [
+    'The lamp turned its slow white eye across the water. ',
+    'Maren climbed the last of the hundred and twelve stairs, as she had every night since Isla.',
+  ],
+};
+
+export const sampleOpeningExtraction: ExtractorOutput = {
+  summary: 'Maren tends the lamp alone on the anniversary of Isla drowning.',
+  characters: ['Maren Tull'],
+  location: 'Skerry Light',
+  beatsHit: ['c1-b1'],
+  newCharacters: [],
+  facts: [
+    {
+      kind: 'timeline',
+      statement: 'The chapter opens on the anniversary of Isla drowning.',
+      entities: ['Maren Tull'],
+    },
+  ],
+  promises: [],
+};
+
+export const sampleTurnNarration: FakeStream = {
+  stream: [
+    'At the tideline a green bottle rolled against her boot. ',
+    'Inside, a letter: "Isla," it began, and it was dated next spring.',
+  ],
+};
+
+export const sampleTurnExtraction: ExtractorOutput = {
+  summary: 'Maren finds a bottle holding a letter to Isla dated next spring.',
+  characters: ['Maren Tull'],
+  location: 'Skerry Light',
+  beatsHit: ['c1-b2'],
+  newCharacters: [
+    { name: 'Old Hendry', proposedTier: 'walk_on', role: 'ferryman', trait: 'never speaks first' },
+  ],
+  facts: [
+    {
+      kind: 'object',
+      statement: 'Maren has the first bottle and its letter.',
+      entities: ['Maren Tull'],
+    },
+  ],
+  promises: [
+    {
+      type: 'mystery',
+      description: 'Who wrote the letter from the future?',
+      entities: ['Maren Tull'],
+    },
+  ],
+};
+
+export const sampleNpcVoice: NpcVoiceOutput = {
+  action: 'Tomas sets his clipboard on the wet rail.',
+  dialogue: 'The order is signed, Miss Tull. I am sorry for it.',
 };

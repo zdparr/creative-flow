@@ -4,14 +4,14 @@ Source of truth: [SPEC.md](SPEC.md). This file tracks the current phase, decisio
 
 ## Current phase
 
-**Phase 1 — Foundation.** Code complete and passing locally (lint, typecheck, 23 tests, build).
-Remaining for done-when: deploy from the Blueprint on Render and confirm migrations run in pre-deploy.
+**Phase 3 — Play loop.** Code complete and passing locally (lint, typecheck, 80 tests, build). The done-when flow (play a full chapter, end it, chronicle recorded) passes in `packages/services/src/phase3.test.ts` and over HTTP/SSE in `apps/api/src/app.test.ts`, with recorded model responses.
+Remaining for done-when: play one chapter on Render against the live models.
 
 | Phase                       | Status                                 |
 | --------------------------- | -------------------------------------- |
 | 1. Foundation               | Done (deployed 2026-09-28)             |
-| 2. Intake, bible, outline   | Code done; awaiting live run on Render |
-| 3. Play loop                | Not started                            |
+| 2. Intake, bible, outline   | Done (verified live 2026-09-28)        |
+| 3. Play loop                | Code done; awaiting live run on Render |
 | 4. Characters               | Not started                            |
 | 5. Novelize, cohesion, lock | Not started                            |
 | 6. Re-plan and drift        | Not started                            |
@@ -38,8 +38,21 @@ Remaining for done-when: deploy from the Blueprint on Render and confirm migrati
 - **Bible:** stored as spine, world, and style-guide JSONB. The cast lives inside `world.cast`; character cards (Phase 4) will be built from it. The title is stored on the project. Every save or regeneration is a new version; approval stamps the latest. Section regeneration reuses the interviewer agent with a revise task.
 - **Spine gate:** 3-5 anchor beats, including an inciting incident and a climax, each assigned to a chapter within `chapterCount`. The spec lists the four standard anchors "plus optional others" but also says 3-5 in all, so only the two bookends are required.
 - **Outline:** the outliner runs as the `outline.generate` job, started automatically when the bible is approved and again on regenerate with notes. Each chapter stores its planned promises (`outline_chapters.promises`, new in migration 0001). Author edits and reorders save as a new version with chapters renumbered by position. Approval checks the outline against the spine (chapter count, anchors in their target chapters, promises paying off later) and creates the `chapters` rows.
-- **Job progress:** the Outline screen polls every 3 seconds while a job is queued or running. The spec's SSE `/events` stream is deferred to Phase 3, which builds SSE for play turns anyway.
+- **Job progress:** the Outline screen polls every 3 seconds while a job is queued or running. The spec's SSE `/events` stream for job status is deferred to Phase 5, when there are several job types to watch; play turns already stream over SSE.
 - **Reorder:** drag and drop plus up/down buttons, because native drag doesn't work on phones.
+
+### Phase 3
+
+- **Director:** one streamed fast-tier call per turn, with the book (spine, world, style) in the cached system prompt and the chapter plan, beat tracker, in-scene cards, open promises, and recent turns in the message. It never decides the protagonist's choices. Author notes reach it as `[author: ...]`.
+- **NPC voice:** the director calls a `voice_character` tool for major characters other than the protagonist. Each call runs the NPC agent with only that character's card, knowledge, and the turns that mention them, and is saved as an `npc` turn. Minor characters and walk-ons are voiced by the director.
+- **Extractor:** runs inline after each turn and writes a chronicle event: summary, characters, location, beats hit, interiority note, and the author's note if any. Candidate facts, promises, and new characters are stored on the event (`chronicle_events.extracted`, migration 0002) and stay pending until the Phase 5 lock. If the extractor fails, the turn stands and the author sees a warning.
+- **Characters in Phase 3:** the bible's cast becomes approved character records the first time a chapter is played; newly named characters become provisional records with the tier the extractor proposes. Cards, approval, and merging are Phase 4.
+- **Beat tracker:** a beat is hit when a canon chronicle event records it, or when the author ticks it by hand (`chapters.manual_beats`), so a missed detection never blocks the chapter. "End chapter" requires every beat. Removing a scene from canon removes its beats.
+- **Context budget:** `buildDirectorContext` in core keeps the last 20 turns, the last 3 locked-chapter summaries, and ledger facts tied to the scene's characters and location. Over budget, it drops oldest turns (down to 4), then oldest summaries, then lowest-severity facts; the spine, plan, and in-scene cards are never dropped. The budget is 60,000 tokens.
+- **Streaming:** turns are POST requests answered with a server-sent event stream (`delta`, `npc`, `turn`, `chronicle`, `warning`, `error`, `done`). The stream opens on the first event, so refusals before any output are ordinary JSON errors.
+- **One turn at a time:** an in-process lock per chapter rejects a concurrent turn. This relies on the web service running as one instance; move the lock to Redis if it scales out.
+- **Order and ending:** chapters are played in order (chapter N needs N-1 locked). Ending moves the chapter to `drafting`; until Phase 5 adds novelizing, "Return to play" moves it back. A failed director response leaves the author's turn in place with a retry button.
+- **Swappable protagonist:** the play loop takes a `ProtagonistInput` from its caller. Today that is the author; later it can be an agent seeded with the protagonist's card.
 
 ## Open questions
 
@@ -50,5 +63,7 @@ From the spec:
 - Which seed world, if any, should the first test novella use? (Needed by Phase 5's seeded test book.)
 
 From the build:
+
+- The director runs at `medium` effort. If turns feel slow, try `low` for the fast tier.
 
 - If Render's preinstalled pnpm fails to honor `packageManager`, switch the build command to `npx --yes pnpm@10.34.5 install --frozen-lockfile && npx --yes pnpm@10.34.5 build`.
