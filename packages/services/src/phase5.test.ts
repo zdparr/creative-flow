@@ -9,11 +9,10 @@ import {
   getReview,
   lockChapter,
   proposeFix,
-  recheckDraft,
   regenerateDraft,
   waiveIssue,
 } from './drafting.js';
-import { endChapter, reopenChapter, startChapter } from './play.js';
+import { endChapter, getPlayState, reopenChapter, startChapter } from './play.js';
 import {
   type TestKit,
   createTestKit,
@@ -188,6 +187,7 @@ describe('Phase 5: novelize, cohesion, lock', () => {
       '"The light closes at the end of the month," he said, and set the order on the table.';
     llm.push({
       edits: [{ paragraph: 2, text: fixed }],
+      move: null,
       explanation: 'Tomas no longer mentions the letters.',
     });
     const proposal = await proposeFix(ctx, c2, 'c1');
@@ -233,21 +233,91 @@ describe('Phase 5: novelize, cohesion, lock', () => {
     expect(review.canLock).toBe(true);
   });
 
+  it('moves paragraphs and their scenes to the next chapter as a new required beat', async () => {
+    const { ctx, llm } = kit;
+    const { project, chapters } = await seededProject(ctx);
+    const c1 = chapters[0]!.id;
+    await draftSeedChapter(kit, c1, 1);
+    // The critic finds that the chapter runs into the next chapter's material.
+    await editDraft(ctx, c1, seedChapters[1].prose);
+    await runQueued(kit, 'chapter.cohesion', {
+      ...seedChapters[1].critic,
+      issues: [
+        {
+          severity: 'warning',
+          category: 'pacing',
+          paragraph: 2,
+          description: 'The bottle belongs to the next chapter.',
+          evidence: 'Chapter 2 opens on the letters.',
+          suggestedFix: 'Move paragraph 2 to chapter 2.',
+        },
+      ],
+    });
+
+    const beat = 'Maren finds a green bottle at the tideline holding a letter to Isla.';
+    llm.push({
+      edits: [],
+      move: { paragraphs: [2, 2], scenes: [1], beat },
+      explanation: 'The discovery opens chapter 2 instead.',
+    });
+    const proposal = await proposeFix(ctx, c1, 'c1');
+    expect(proposal.move).toMatchObject({
+      toChapter: 2,
+      paragraphs: [{ paragraph: 2, text: seedChapters[1].prose.split('\n\n')[1] }],
+      scenes: [{ summary: seedChapters[1].extraction.summary }],
+      beat,
+    });
+    const prompt = llm.requests.at(-1)!.messages[0]!.content as string;
+    expect(prompt).toContain(`[1] ${seedChapters[1].extraction.summary} (hits beats: s1-b1)`);
+    expect(prompt).toContain('# The next chapter (content may move here)\nChapter 2:');
+
+    await applyFix(ctx, c1, 'c1', {
+      draftVersion: proposal.draftVersion,
+      edits: [],
+      move: {
+        paragraphs: [2],
+        sceneIds: proposal.move!.scenes.map((s) => s.id),
+        beat: proposal.move!.beat,
+      },
+    });
+    const review = await getReview(ctx, c1);
+    expect(review.paragraphs).toEqual([seedChapters[1].prose.split('\n\n')[0]]);
+    expect(review.draft?.notes).toBe('Moved ¶2 to chapter 2 (pacing)');
+    expect(review.job).toMatchObject({ type: 'chapter.cohesion', status: 'queued' });
+    // The next chapter must now play it.
+    const outline = await ctx.repos.outlines.latest(project.id);
+    expect(outline!.chapters[1]!.requiredBeats.at(-1)).toEqual({
+      id: 'c2-moved-1',
+      description: `From chapter 1: ${beat}`,
+    });
+    expect((await getPlayState(ctx, chapters[1]!.id)).beats.map((b) => b.id)).toContain(
+      'c2-moved-1',
+    );
+
+    // The moved scene's facts are not locked into chapter 1.
+    await runQueued(kit, 'chapter.cohesion', seedChapters[1].critic);
+    await lockChapter(ctx, c1);
+    const facts = await ctx.repos.ledger.listActive(project.id);
+    expect(facts.map((f) => f.statement)).not.toContain(
+      seedChapters[1].extraction.facts[0]!.statement,
+    );
+  });
+
   it('supports inline edits, re-checks, regeneration with notes, waivers, and return to play', async () => {
     const { ctx, llm } = kit;
     const { chapters } = await seededProject(ctx);
     const chapter = chapters[0]!;
     await draftSeedChapter(kit, chapter.id, 1);
 
-    // An inline edit is a new version; its report must be re-run before lock.
+    // An inline edit is a new version that queues its own re-check; no lock until it reports.
     await editDraft(ctx, chapter.id, 'The lamp turned.\n\nThe bottle waited.');
     let review = await getReview(ctx, chapter.id);
     expect(review.draft?.version).toBe(2);
     expect(review.versions.map((v) => v.version)).toEqual([2, 1]);
+    expect(review.job).toMatchObject({ type: 'chapter.cohesion', status: 'queued' });
     expect(review.gates.reportMissing).toBe(true);
     expect(review.canLock).toBe(false);
     await expect(lockChapter(ctx, chapter.id)).rejects.toBeInstanceOf(GateError);
-    await recheckDraft(ctx, chapter.id);
     await runQueued(kit, 'chapter.cohesion', seedChapters[1].critic);
     expect((await getReview(ctx, chapter.id)).canLock).toBe(true);
 

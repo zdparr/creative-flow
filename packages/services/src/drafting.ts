@@ -6,6 +6,7 @@ import {
   GateError,
   NotFoundError,
   type NovelizerEvent,
+  type OutlineChapter,
   type Waiver,
   keyDialogue,
   normalizeCard,
@@ -16,12 +17,13 @@ import {
   runFixer,
   runNovelizer,
   draftParagraphs,
+  validateOutline,
   wordCount,
 } from '@storyforge/core';
 import { type CharacterRow, type ChapterRow, cardsAsOf, inTransaction } from '@storyforge/db';
 import { cardsForChapter, ensureCast, unapprovedCharactersIn } from './characters.js';
 import type { ServiceContext } from './context.js';
-import { requestReplan } from './replan.js';
+import { requestReplan, reviseOutline } from './replan.js';
 import { type ChapterBasics, chapterBasics, knowledgeItems, ledgerFacts } from './state.js';
 
 export interface NovelizeJobInput {
@@ -333,13 +335,13 @@ function assertReviewable(chapter: ChapterRow) {
   }
 }
 
-/** An inline author edit: a new current version. Its cohesion report must be re-run before lock. */
+/** An inline author edit: a new current version, re-checked so its report stays actionable. */
 export async function editDraft(ctx: ServiceContext, chapterId: string, prose: string) {
   const chapter = await ctx.repos.chapters.get(chapterId);
   if (!chapter) throw new NotFoundError('Chapter');
   assertReviewable(chapter);
   if (!prose.trim()) throw new GateError('The draft cannot be empty');
-  await ctx.repos.drafts.create({
+  const draft = await ctx.repos.drafts.create({
     projectId: chapter.projectId,
     chapterId,
     prose: prose.trim(),
@@ -347,6 +349,7 @@ export async function editDraft(ctx: ServiceContext, chapterId: string, prose: s
     notes: 'Edited by the author',
     jobId: null,
   });
+  await requestCohesion(ctx, chapter, draft.id);
 }
 
 /** Regenerate with notes: back to drafting and a new novelize job. */
@@ -410,6 +413,13 @@ export interface FixProposal {
   draftVersion: number;
   explanation: string;
   edits: { paragraph: number; before: string; after: string }[];
+  /** Content the fix moves to the next chapter, which gains a required beat for it. */
+  move: {
+    toChapter: number;
+    paragraphs: { paragraph: number; text: string }[];
+    scenes: { id: string; summary: string }[];
+    beat: string;
+  } | null;
 }
 
 /** The current draft and its report, which must match for an issue to be fixed. */
@@ -429,6 +439,25 @@ async function currentIssue(ctx: ServiceContext, chapterId: string, issueId: str
   return { chapter, draft, issue, report };
 }
 
+/**
+ * Where a fix can move content: the next chapter's plan, while that chapter is still to be
+ * played or being played. Null for the last chapter or one already drafted.
+ */
+async function nextChapterFor(ctx: ServiceContext, chapter: ChapterRow) {
+  const [chapters, outline] = await Promise.all([
+    ctx.repos.chapters.listForProject(chapter.projectId),
+    ctx.repos.outlines.latest(chapter.projectId),
+  ]);
+  const next = chapters.find((c) => c.number === chapter.number + 1);
+  const plan = outline?.chapters.find((c) => c.number === chapter.number + 1);
+  if (!outline || !next || !plan) return null;
+  if (next.status !== 'planned' && next.status !== 'playing') return null;
+  return { plan, outline: outline.chapters };
+}
+
+const canonScenes = async (ctx: ServiceContext, chapterId: string) =>
+  (await ctx.repos.play.listChronicle(chapterId)).filter((e) => e.isCanon);
+
 /** Asks the fixer for revised paragraphs that resolve one issue. Nothing changes until approved. */
 export async function proposeFix(
   ctx: ServiceContext,
@@ -436,17 +465,19 @@ export async function proposeFix(
   issueId: string,
 ): Promise<FixProposal> {
   const { chapter, draft, issue, report } = await currentIssue(ctx, chapterId, issueId);
-  const { input: context } = await cohesionContext(
-    ctx,
-    await chapterBasics(ctx, chapterId),
-    draft.prose,
-  );
+  const [{ input: context }, scenes, next] = await Promise.all([
+    chapterBasics(ctx, chapterId).then((basics) => cohesionContext(ctx, basics, draft.prose)),
+    canonScenes(ctx, chapterId),
+    nextChapterFor(ctx, chapter),
+  ]);
   const { paragraphs } = context;
   const waived = new Set(report.waived.map((w) => w.issueId));
   const out = await runFixer(ctx.agentContext(chapter.projectId, { chapterId }), {
     context,
     issue,
     otherIssues: report.issues.filter((i) => i.id !== issueId && !waived.has(i.id)),
+    scenes: scenes.map((e) => ({ summary: e.summary, beats: e.beatIds })),
+    nextChapter: next?.plan ?? null,
   });
   return {
     issueId,
@@ -457,52 +488,148 @@ export async function proposeFix(
       before: paragraphs[e.paragraph - 1]!,
       after: e.text,
     })),
+    move:
+      out.move && next
+        ? {
+            toChapter: next.plan.number,
+            paragraphs: out.move.paragraphs.map((n) => ({
+              paragraph: n,
+              text: paragraphs[n - 1]!,
+            })),
+            scenes: out.move.scenes.map((n) => ({
+              id: scenes[n - 1]!.id,
+              summary: scenes[n - 1]!.summary,
+            })),
+            beat: out.move.beat,
+          }
+        : null,
   };
 }
 
-/** Replaces the nth paragraph (1-based, scene breaks not counted), keeping the prose's shape. */
-export function replaceParagraphs(prose: string, edits: Map<number, string>): string {
+/**
+ * Replaces the nth paragraph (1-based, scene breaks not counted) and drops removed ones,
+ * keeping the prose's shape. A scene break left at an edge or doubled by a removal goes too.
+ */
+export function replaceParagraphs(
+  prose: string,
+  edits: Map<number, string>,
+  removed: ReadonlySet<number> = new Set(),
+): string {
   let n = 0;
-  return proseBlocks(prose)
-    .map((b) => {
-      if (b.kind === 'break') return '#';
-      n += 1;
-      return edits.get(n) ?? b.text;
-    })
+  const blocks = proseBlocks(prose).flatMap((b) => {
+    if (b.kind === 'break') return ['#'];
+    n += 1;
+    return removed.has(n) ? [] : [edits.get(n) ?? b.text];
+  });
+  return blocks
+    .filter((b, i) => b !== '#' || (i > 0 && i < blocks.length - 1 && blocks[i + 1] !== '#'))
     .join('\n\n');
+}
+
+/** "3", "3-5", or "3-5, 8": the paragraphs a note refers to. */
+function paragraphRanges(ns: number[]): string {
+  const ranges: [number, number][] = [];
+  for (const n of ns) {
+    const last = ranges.at(-1);
+    if (last && n === last[1] + 1) last[1] = n;
+    else ranges.push([n, n]);
+  }
+  return ranges.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ');
+}
+
+export interface ApprovedFix {
+  draftVersion: number;
+  edits: { paragraph: number; text: string }[];
+  move?: { paragraphs: number[]; sceneIds: string[]; beat: string } | null;
 }
 
 /**
  * The author approves a fix (possibly after editing it): the draft gets a new version with
- * those paragraphs replaced, and the cohesion check re-runs on it.
+ * those paragraphs replaced, and the cohesion check re-runs on it. A move also cuts paragraphs,
+ * takes their scenes out of this chapter's canon (so their facts are not committed at lock or
+ * redrafted here), and adds a required beat to the next chapter's plan.
  */
 export async function applyFix(
   ctx: ServiceContext,
   chapterId: string,
   issueId: string,
-  approved: { draftVersion: number; edits: { paragraph: number; text: string }[] },
+  approved: ApprovedFix,
 ) {
   const { chapter, draft, issue } = await currentIssue(ctx, chapterId, issueId);
   if (approved.draftVersion !== draft.version) {
     throw new ConflictError('The draft changed after this fix was proposed; ask for a new one');
   }
   const count = draftParagraphs(draft.prose).length;
+  const move = approved.move ?? null;
+  const removed = new Set(move?.paragraphs ?? []);
   const edits = new Map<number, string>();
   for (const e of approved.edits) {
     const text = e.text.replace(/\s*\n\s*/g, ' ').trim();
     if (e.paragraph < 1 || e.paragraph > count) throw new GateError(`No paragraph ${e.paragraph}`);
     if (!text) throw new GateError(`Paragraph ${e.paragraph} cannot be empty`);
+    if (removed.has(e.paragraph)) throw new GateError(`Paragraph ${e.paragraph} is being moved`);
     edits.set(e.paragraph, text);
   }
-  if (edits.size === 0) throw new GateError('The fix changes nothing');
-  const prose = replaceParagraphs(draft.prose, edits);
-  const next = await ctx.repos.drafts.create({
-    projectId: chapter.projectId,
-    chapterId,
-    prose,
-    wordCount: wordCount(prose),
-    notes: `Fixed ${issue.paragraph > 0 ? `¶${issue.paragraph} ` : ''}(${issue.category})`,
-    jobId: null,
+  if (edits.size === 0 && !move) throw new GateError('The fix changes nothing');
+
+  let revisedOutline: OutlineChapter[] | null = null;
+  let toChapter = 0;
+  if (move) {
+    const [next, basics, scenes] = await Promise.all([
+      nextChapterFor(ctx, chapter),
+      chapterBasics(ctx, chapterId),
+      canonScenes(ctx, chapterId),
+    ]);
+    if (!next) throw new GateError('There is no open next chapter to move this to');
+    if (removed.size === 0) throw new GateError('Choose the paragraphs to move');
+    for (const n of removed) {
+      if (n < 1 || n > count) throw new GateError(`No paragraph ${n}`);
+    }
+    if (removed.size >= count) throw new GateError('The chapter must keep some paragraphs');
+    if (move.sceneIds.some((id) => !scenes.some((e) => e.id === id))) {
+      throw new GateError('A scene to move is not in this chapter');
+    }
+    const description = move.beat.replace(/\s+/g, ' ').trim();
+    if (!description) throw new GateError('Describe what happens in the next chapter');
+    toChapter = next.plan.number;
+    const ids = new Set(next.outline.flatMap((c) => c.requiredBeats.map((b) => b.id)));
+    let k = 1;
+    while (ids.has(`c${toChapter}-moved-${k}`)) k += 1;
+    revisedOutline = next.outline.map((c) =>
+      c.number === toChapter
+        ? {
+            ...c,
+            requiredBeats: [
+              ...c.requiredBeats,
+              {
+                id: `c${toChapter}-moved-${k}`,
+                description: `From chapter ${chapter.number}: ${description}`,
+              },
+            ],
+          }
+        : c,
+    );
+    const problems = validateOutline(revisedOutline, basics.bible.spine);
+    if (problems.length) throw new GateError('Moving this would break the outline', problems);
+  }
+
+  const prose = replaceParagraphs(draft.prose, edits, removed);
+  const where = issue.paragraph > 0 ? `¶${issue.paragraph} ` : '';
+  const notes = move
+    ? `Moved ¶${paragraphRanges([...removed].sort((a, b) => a - b))} to chapter ${toChapter} (${issue.category})`
+    : `Fixed ${where}(${issue.category})`;
+  const next = await inTransaction(ctx.db, async (repos) => {
+    const created = await repos.drafts.create({
+      projectId: chapter.projectId,
+      chapterId,
+      prose,
+      wordCount: wordCount(prose),
+      notes,
+      jobId: null,
+    });
+    for (const id of move?.sceneIds ?? []) await repos.play.setCanon(chapterId, id, false);
+    if (revisedOutline) await reviseOutline(repos, chapter.projectId, revisedOutline);
+    return created;
   });
   await requestCohesion(ctx, chapter, next.id);
 }

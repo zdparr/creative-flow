@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { ErrorNote, Problems, TextField, Working, humanize } from '../components.js';
 import { navigate } from '../router.js';
-import type { CohesionIssue, FixProposal, ReviewView } from '../types.js';
+import type { ApprovedFix, CohesionIssue, FixProposal, ReviewView } from '../types.js';
 
 const SEVERITY_ORDER = { blocker: 0, warning: 1, note: 2 } as const;
 const SCENE_BREAK = /^\s*(#|\*\s*\*\s*\*)\s*$/;
@@ -40,13 +40,48 @@ function FixPanel({
 }: {
   proposal: FixProposal;
   busy: boolean;
-  onApprove: (edits: { paragraph: number; text: string }[]) => void;
+  onApprove: (fix: ApprovedFix) => void;
   onDiscard: () => void;
 }) {
   const [texts, setTexts] = useState(proposal.edits.map((e) => e.after));
+  const [beat, setBeat] = useState(proposal.move?.beat ?? '');
+  const { move } = proposal;
   return (
     <div className="fix stack">
       <p className="small-print">{proposal.explanation}</p>
+      {move && (
+        <div className="stack">
+          <span className="muted small-print">
+            Moves to chapter {move.toChapter} (cut from this chapter):
+          </span>
+          {move.paragraphs.map((p) => (
+            <del key={p.paragraph} className="small-print">
+              ¶{p.paragraph} {p.text}
+            </del>
+          ))}
+          {move.scenes.length > 0 && (
+            <>
+              <span className="muted small-print">
+                These played scenes move with it, so their facts are not locked into this chapter:
+              </span>
+              <ul className="small-print">
+                {move.scenes.map((s) => (
+                  <li key={s.id}>{s.summary}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          <label className="muted small-print" htmlFor={`fix-${proposal.issueId}-beat`}>
+            New required beat for chapter {move.toChapter} (you can edit it):
+          </label>
+          <textarea
+            id={`fix-${proposal.issueId}-beat`}
+            rows={Math.max(3, Math.ceil(beat.length / 45))}
+            value={beat}
+            onChange={(ev) => setBeat(ev.target.value)}
+          />
+        </div>
+      )}
       {proposal.edits.map((e, i) => (
         <div key={e.paragraph} className="stack">
           <span className="muted small-print">¶{e.paragraph} now reads:</span>
@@ -64,12 +99,19 @@ function FixPanel({
       ))}
       <div className="toolbar">
         <button
-          disabled={busy || texts.some((t) => !t.trim())}
+          disabled={busy || texts.some((t) => !t.trim()) || (!!move && !beat.trim())}
           onClick={() =>
-            onApprove(proposal.edits.map((e, i) => ({ paragraph: e.paragraph, text: texts[i]! })))
+            onApprove({
+              edits: proposal.edits.map((e, i) => ({ paragraph: e.paragraph, text: texts[i]! })),
+              move: move && {
+                paragraphs: move.paragraphs.map((p) => p.paragraph),
+                sceneIds: move.scenes.map((s) => s.id),
+                beat,
+              },
+            })
           }
         >
-          Approve fix
+          {move ? `Approve and move to chapter ${move.toChapter}` : 'Approve fix'}
         </button>
         <button className="quiet" disabled={busy} onClick={onDiscard}>
           Discard
@@ -102,7 +144,7 @@ function IssueCard({
   onEdit: () => void;
   onAddNote: () => void;
   onPropose: () => Promise<FixProposal | null>;
-  onApply: (proposal: FixProposal, edits: { paragraph: number; text: string }[]) => Promise<void>;
+  onApply: (proposal: FixProposal, fix: ApprovedFix) => Promise<void>;
 }) {
   const [reason, setReason] = useState('');
   const [proposal, setProposal] = useState<FixProposal | null>(null);
@@ -117,11 +159,11 @@ function IssueCard({
     }
   }
 
-  async function apply(edits: { paragraph: number; text: string }[]) {
+  async function apply(fix: ApprovedFix) {
     if (!proposal) return;
     setFixing(true);
     try {
-      await onApply(proposal, edits);
+      await onApply(proposal, fix);
     } finally {
       setFixing(false);
     }
@@ -513,7 +555,13 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
         <section>
           <h2>Cohesion report</h2>
           {!report && !working && <p className="muted">Not checked yet.</p>}
-          {report && !report.current && (
+          {report && !report.current && working && (
+            <p className="notice">
+              Re-checking the new version. These issues are from the previous one; fixes and waivers
+              come back when the check finishes.
+            </p>
+          )}
+          {report && !report.current && !working && (
             <div className="notice stack">
               <p>The draft has changed since it was last checked. Check it again before locking.</p>
               {reviewable && (
@@ -554,11 +602,11 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
                     return null;
                   }
                 }}
-                onApply={(proposal, edits) =>
+                onApply={(proposal, fix) =>
                   run(() =>
                     api('POST', `/chapters/${chapterId}/issues/${issue.id}/fix/apply`, {
                       draftVersion: proposal.draftVersion,
-                      edits,
+                      ...fix,
                     }),
                   )
                 }

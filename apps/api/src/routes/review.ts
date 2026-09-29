@@ -25,6 +25,14 @@ const driftBody = z.object({ resolution: z.enum(['steer', 'adopt']) });
 const applyFixBody = z.object({
   draftVersion: z.number().int(),
   edits: z.array(z.object({ paragraph: z.number().int(), text: z.string() })),
+  move: z
+    .object({
+      paragraphs: z.array(z.number().int()),
+      sceneIds: z.array(z.string()),
+      beat: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 
 type ChapterParams = { Params: { id: string } };

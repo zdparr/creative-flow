@@ -286,4 +286,17 @@ export interface FixProposal {
   draftVersion: number;
   explanation: string;
   edits: { paragraph: number; before: string; after: string }[];
+  /** Content the fix moves to the next chapter, which gains a required beat for it. */
+  move: {
+    toChapter: number;
+    paragraphs: { paragraph: number; text: string }[];
+    scenes: { id: string; summary: string }[];
+    beat: string;
+  } | null;
+}
+
+/** What the author approves: the edited paragraphs, and any move to the next chapter. */
+export interface ApprovedFix {
+  edits: { paragraph: number; text: string }[];
+  move: { paragraphs: number[]; sceneIds: string[]; beat: string } | null;
 }
