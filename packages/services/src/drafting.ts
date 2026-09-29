@@ -2,6 +2,7 @@ import {
   type CardContent,
   type CohesionIssue,
   ConflictError,
+  type CriticInput,
   GateError,
   NotFoundError,
   type NovelizerEvent,
@@ -138,21 +139,13 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
 
 // ---------- chapter.cohesion ----------
 
-/** The chapter.cohesion job: the critic's report plus rule checks, saved against the draft. */
-export async function checkCohesion(ctx: ServiceContext, jobId: string, input: CohesionJobInput) {
-  const basics = await chapterBasics(ctx, input.chapterId);
+/**
+ * Everything the book has established that a chapter draft must respect: cards as of the
+ * chapter, the knowledge map, the ledger, open promises, and arc checkpoints due. The critic
+ * checks against it, and the fixer revises against it so a fix does not break something else.
+ */
+async function cohesionContext(ctx: ServiceContext, basics: ChapterBasics, prose: string) {
   const { chapter, project, bible, plan } = basics;
-  const [draft, current] = await Promise.all([
-    ctx.repos.drafts.get(input.draftId),
-    ctx.repos.drafts.current(chapter.id),
-  ]);
-  if (!draft) throw new NotFoundError('Draft');
-  // A newer draft replaced this one while the job waited; its own check will follow.
-  if (current?.id !== draft.id) return 'stale';
-  if (!['drafting', 'review', 'needs_recheck'].includes(chapter.status)) {
-    throw new ConflictError('This chapter is not awaiting review');
-  }
-
   const N = chapter.number;
   const characters = await ensureCast(ctx, project.id, bible);
   const [{ chronicle, cast }, knowledge, facts, registry] = await Promise.all([
@@ -167,33 +160,53 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
   const openPromises = registry.filter(
     (p) => p.plantedChapter < N && (p.status === 'open' || (p.paidChapter ?? 0) >= N),
   );
-  const paragraphs = draftParagraphs(draft.prose);
+  const input: CriticInput = {
+    bible,
+    chapterNumber: N,
+    plan,
+    paragraphs: draftParagraphs(prose),
+    cards,
+    knowledge: knowledge
+      .filter((k) => cast.some((c) => c.id === k.characterId))
+      .map((k) => ({ ...k, character: nameOf.get(k.characterId) ?? 'unknown' })),
+    openPromises: openPromises.map((p) => ({
+      id: p.id,
+      description: p.description,
+      from: p.window.from,
+      to: p.window.to,
+    })),
+    ledger: facts.map((f) => ({ chapter: f.chapter, kind: f.kind, statement: f.statement })),
+    checkpointsDue: cards.flatMap((c) =>
+      (c.card.checkpoints ?? [])
+        .filter((cp) => cp.chapter <= N && !cp.met)
+        .map((cp) => ({ character: c.name, chapter: cp.chapter, description: cp.description })),
+    ),
+    candidatePromises: chronicle.flatMap((e) => e.extracted.promises.map((p) => p.description)),
+  };
+  return { input, openPromises };
+}
 
+/** The chapter.cohesion job: the critic's report plus rule checks, saved against the draft. */
+export async function checkCohesion(ctx: ServiceContext, jobId: string, input: CohesionJobInput) {
+  const basics = await chapterBasics(ctx, input.chapterId);
+  const { chapter, project, bible } = basics;
+  const [draft, current] = await Promise.all([
+    ctx.repos.drafts.get(input.draftId),
+    ctx.repos.drafts.current(chapter.id),
+  ]);
+  if (!draft) throw new NotFoundError('Draft');
+  // A newer draft replaced this one while the job waited; its own check will follow.
+  if (current?.id !== draft.id) return 'stale';
+  if (!['drafting', 'review', 'needs_recheck'].includes(chapter.status)) {
+    throw new ConflictError('This chapter is not awaiting review');
+  }
+
+  const N = chapter.number;
+  const { input: criticInput, openPromises } = await cohesionContext(ctx, basics, draft.prose);
+  const { paragraphs } = criticInput;
   const out = await runCohesionCritic(
     ctx.agentContext(project.id, { jobId, chapterId: chapter.id }),
-    {
-      bible,
-      chapterNumber: N,
-      plan,
-      paragraphs,
-      cards,
-      knowledge: knowledge
-        .filter((k) => cast.some((c) => c.id === k.characterId))
-        .map((k) => ({ ...k, character: nameOf.get(k.characterId) ?? 'unknown' })),
-      openPromises: openPromises.map((p) => ({
-        id: p.id,
-        description: p.description,
-        from: p.window.from,
-        to: p.window.to,
-      })),
-      ledger: facts.map((f) => ({ chapter: f.chapter, kind: f.kind, statement: f.statement })),
-      checkpointsDue: cards.flatMap((c) =>
-        (c.card.checkpoints ?? [])
-          .filter((cp) => cp.chapter <= N && !cp.met)
-          .map((cp) => ({ character: c.name, chapter: cp.chapter, description: cp.description })),
-      ),
-      candidatePromises: chronicle.flatMap((e) => e.extracted.promises.map((p) => p.description)),
-    },
+    criticInput,
   );
 
   const paid = new Set(out.paidPromiseIds);
@@ -413,7 +426,7 @@ async function currentIssue(ctx: ServiceContext, chapterId: string, issueId: str
   }
   const issue = report.issues.find((i) => i.id === issueId);
   if (!issue) throw new NotFoundError('Issue');
-  return { chapter, draft, issue };
+  return { chapter, draft, issue, report };
 }
 
 /** Asks the fixer for revised paragraphs that resolve one issue. Nothing changes until approved. */
@@ -422,13 +435,18 @@ export async function proposeFix(
   chapterId: string,
   issueId: string,
 ): Promise<FixProposal> {
-  const { chapter, draft, issue } = await currentIssue(ctx, chapterId, issueId);
-  const { bible } = await chapterBasics(ctx, chapterId);
-  const paragraphs = draftParagraphs(draft.prose);
+  const { chapter, draft, issue, report } = await currentIssue(ctx, chapterId, issueId);
+  const { input: context } = await cohesionContext(
+    ctx,
+    await chapterBasics(ctx, chapterId),
+    draft.prose,
+  );
+  const { paragraphs } = context;
+  const waived = new Set(report.waived.map((w) => w.issueId));
   const out = await runFixer(ctx.agentContext(chapter.projectId, { chapterId }), {
-    bible,
-    paragraphs,
+    context,
     issue,
+    otherIssues: report.issues.filter((i) => i.id !== issueId && !waived.has(i.id)),
   });
   return {
     issueId,

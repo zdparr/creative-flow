@@ -3,8 +3,8 @@ import { type AgentContext, runStructuredAgent } from '../llm/runAgent.js';
 import { withHouseStyle } from '../prose/houseStyle.js';
 import { proseProblems } from '../prose/rules.js';
 import { loadPrompt } from '../prompts/loader.js';
-import type { BibleContent } from '../schemas/bible.js';
 import type { CohesionIssue } from '../schemas/cohesion.js';
+import { type CriticInput, cohesionSections, numberedDraft } from './critic.js';
 
 export const fixOutputSchema = z.object({
   edits: z
@@ -20,22 +20,32 @@ export const fixOutputSchema = z.object({
 export type FixOutput = z.infer<typeof fixOutputSchema>;
 
 export interface FixerInput {
-  bible: BibleContent;
-  paragraphs: string[];
+  /** The same context the cohesion critic checks against, including the draft. */
+  context: CriticInput;
   issue: CohesionIssue;
+  /** The report's other open issues, which the fix must not make worse. */
+  otherIssues: CohesionIssue[];
 }
 
-/** Proposes replacement paragraphs that fix one cohesion issue, for the author to approve. */
+const describe = (i: CohesionIssue) =>
+  `- [${i.severity} ${i.category}, ${i.paragraph > 0 ? `paragraph ${i.paragraph}` : 'whole chapter'}] ${i.description}`;
+
+/**
+ * Proposes replacement paragraphs that fix one cohesion issue, for the author to approve. It
+ * revises against everything the critic checks, so a fix does not create a new problem.
+ */
 export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<FixOutput> {
-  const { styleGuide } = input.bible;
-  const { issue } = input;
+  const { issue, context } = input;
+  const { paragraphs } = context;
   const content = [
-    `# Style guide\nPOV: ${styleGuide.pov}${styleGuide.povCharacter ? ` (${styleGuide.povCharacter})` : ''}, tense: ${styleGuide.tense}. Register: ${styleGuide.register}. Banned phrases: ${styleGuide.bannedPhrases.join('; ') || '(none)'}`,
-    `# The problem\nSeverity: ${issue.severity}\nCategory: ${issue.category}\nWhere: ${issue.paragraph > 0 ? `paragraph ${issue.paragraph}` : 'the whole chapter'}\nWhat is wrong: ${issue.description}\nEvidence: ${issue.evidence}\nSuggested fix: ${issue.suggestedFix}`,
-    `# The draft (numbered paragraphs)\n${input.paragraphs.map((p, i) => `[${i + 1}] ${p}`).join('\n\n')}`,
-    '# Your task\nRevise only the paragraphs needed to fix the problem.',
+    ...cohesionSections(context),
+    numberedDraft(paragraphs),
+    `# The problem to fix\nSeverity: ${issue.severity}\nCategory: ${issue.category}\nWhere: ${issue.paragraph > 0 ? `paragraph ${issue.paragraph}` : 'the whole chapter'}\nWhat is wrong: ${issue.description}\nEvidence: ${issue.evidence}\nSuggested fix: ${issue.suggestedFix}`,
+    `# Other open issues (do not make these worse or add new ones)\n${input.otherIssues.map(describe).join('\n') || '(none)'}`,
+    '# Your task\nRevise only the paragraphs needed to fix the problem. Before answering, check your revision against every card, knowledge entry, ledger fact, promise, and required beat above.',
   ].join('\n\n');
 
+  const banned = context.bible.styleGuide.bannedPhrases;
   const out = await runStructuredAgent(ctx, {
     agent: 'fixer',
     prompt: withHouseStyle(loadPrompt('fixer')),
@@ -46,14 +56,10 @@ export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<Fi
     check: (o) => [
       ...(o.edits.length === 0 ? ['edits: change at least one paragraph'] : []),
       ...o.edits
-        .filter((e) => e.paragraph < 1 || e.paragraph > input.paragraphs.length)
-        .map(
-          (e) => `edits: paragraph ${e.paragraph} does not exist (1-${input.paragraphs.length})`,
-        ),
+        .filter((e) => e.paragraph < 1 || e.paragraph > paragraphs.length)
+        .map((e) => `edits: paragraph ${e.paragraph} does not exist (1-${paragraphs.length})`),
       ...o.edits.flatMap((e) =>
-        proseProblems(e.text, styleGuide.bannedPhrases).map(
-          (p) => `paragraph ${e.paragraph}: ${p}`,
-        ),
+        proseProblems(e.text, banned).map((p) => `paragraph ${e.paragraph}: ${p}`),
       ),
     ],
   });

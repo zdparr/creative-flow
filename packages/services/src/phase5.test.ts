@@ -198,6 +198,14 @@ describe('Phase 5: novelize, cohesion, lock', () => {
     expect(proposal.edits[0]!.before).toContain('letters to your sister');
     const prompt = llm.requests.at(-1)!.messages[0]!.content as string;
     expect(prompt).toContain('Tomas mentions the letters to Isla');
+    // The fixer revises against everything the critic checks, so a fix does not break it.
+    expect(prompt).toContain('Maren Tull knows: Maren has a letter addressed to Isla');
+    expect(prompt).toContain('[ch 1, object] Maren has a letter addressed to Isla');
+    expect(prompt).toContain('s2-b1: Tomas delivers the decommission order.');
+    // Waived issues are not listed as open; the others are.
+    expect(prompt).toContain(
+      '# Other open issues (do not make these worse or add new ones)\n(none)',
+    );
     // Nothing changes until the author approves.
     expect((await getReview(ctx, c2)).draft?.version).toBe(1);
 

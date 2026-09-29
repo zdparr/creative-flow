@@ -767,3 +767,14 @@ textarea.pane {
 .side {
   min-width: 0;
 }
+
+/*
+ * Grid containers size an unspecified column to their widest child (e.g. a select with a long
+ * option), which let the draft spill under the cohesion panel. Pin single-column grids to
+ * the space they have.
+ */
+.story,
+.side,
+.stack {
+  grid-template-columns: minmax(0, 1fr);
+}

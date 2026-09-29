@@ -22,7 +22,8 @@ export interface CriticInput {
   candidatePromises: string[];
 }
 
-export function buildCriticPrompt(input: CriticInput): string {
+/** What the book has established, as prompt sections (everything but the draft itself). */
+export function cohesionSections(input: CriticInput): string[] {
   const { spine, styleGuide } = input.bible;
   return [
     `# Spine\nCentral question: ${spine.centralQuestion}\nTheme: ${spine.theme}\nEnding: ${spine.ending.resolution} (cost: ${spine.ending.cost})\nChapters: ${spine.chapterCount}`,
@@ -34,8 +35,14 @@ export function buildCriticPrompt(input: CriticInput): string {
     `# Open promises\n${input.openPromises.map((p) => `- id ${p.id}: ${p.description} (pay off in chapters ${p.from}-${p.to})`).join('\n') || '(none)'}`,
     `# Arc checkpoints due by this chapter\n${input.checkpointsDue.map((c) => `- ${c.character}, chapter ${c.chapter}: ${c.description}`).join('\n') || '(none)'}`,
     `# Setups noticed during play\n${input.candidatePromises.map((p) => `- ${p}`).join('\n') || '(none)'}`,
-    `# The draft (numbered paragraphs)\n${input.paragraphs.map((p, i) => `[${i + 1}] ${p}`).join('\n\n')}`,
-  ].join('\n\n');
+  ];
+}
+
+export const numberedDraft = (paragraphs: string[]) =>
+  `# The draft (numbered paragraphs)\n${paragraphs.map((p, i) => `[${i + 1}] ${p}`).join('\n\n')}`;
+
+export function buildCriticPrompt(input: CriticInput): string {
+  return [...cohesionSections(input), numberedDraft(input.paragraphs)].join('\n\n');
 }
 
 /** Checks a draft against the book's cohesion structures. */
