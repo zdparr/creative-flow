@@ -98,6 +98,7 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
   const [openCard, setOpenCard] = useState<string | null>(null);
   const inFlight = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
     setState(await api<PlayState>('GET', `/chapters/${chapterId}`));
@@ -115,9 +116,16 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
     return () => clearInterval(timer);
   }, [drafting, busy, reload]);
 
+  // Open at the latest turn, then leave scrolling to the reader: when a turn starts streaming,
+  // bring its start into view once and let the text grow below without following it.
+  const loaded = state !== null;
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [live?.text, state?.turns.length]);
+    if (loaded) endRef.current?.scrollIntoView({ block: 'end' });
+  }, [loaded]);
+  const streaming = live !== null;
+  useEffect(() => {
+    if (streaming) liveRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [streaming]);
 
   /** Runs one streamed turn: shows text as it arrives, then reloads the authoritative state. */
   async function stream(path: string, body?: unknown, author?: Turn) {
@@ -228,12 +236,14 @@ export function PlayScreen({ projectId, chapterId }: { projectId: string; chapte
                 ))}
             </div>
           ))}
-          {live?.author && <TurnView turn={live.author} />}
           {live && (
-            <div className="narration streaming">
-              <Prose text={live.text} />
-              {live.npc && <p className="muted">{live.npc} is responding…</p>}
-              {!live.text && !live.npc && <Working label="The story continues…" />}
+            <div ref={liveRef}>
+              {live.author && <TurnView turn={live.author} />}
+              <div className="narration streaming">
+                <Prose text={live.text} />
+                {live.npc && <p className="muted">{live.npc} is responding…</p>}
+                {!live.text && !live.npc && <Working label="The story continues…" />}
+              </div>
             </div>
           )}
           <div ref={endRef} />
