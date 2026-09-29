@@ -1,4 +1,10 @@
-import type { CohesionIssue, DriftDetails, PlantedPromise, Waiver } from '@storyforge/core';
+import type {
+  CohesionIssue,
+  DriftDetails,
+  FactCorrection,
+  PlantedPromise,
+  Waiver,
+} from '@storyforge/core';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import {
@@ -41,6 +47,7 @@ export function createCohesionRepo(db: Db) {
       paidPromiseIds: string[];
       plantedPromises: PlantedPromise[];
       checkpointsMet: { character: string; chapter: number }[];
+      factCorrections?: FactCorrection[];
       jobId: string | null;
     }): Promise<CohesionReport> {
       const [row] = await db

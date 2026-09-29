@@ -121,6 +121,51 @@ describe('Phase 5: novelize, cohesion, lock', () => {
     expect(chapter.lockedSnapshotId).toBeTruthy();
   });
 
+  it('commits play facts as the revised draft has them', async () => {
+    const { ctx } = kit;
+    const { project, chapters } = await seededProject(ctx);
+    const seed = seedChapters[1];
+    kit.llm.push(seed.opening, seed.extraction);
+    await startChapter(ctx, chapters[0]!.id, recorder().sink);
+    await endChapter(ctx, chapters[0]!.id);
+    await runQueued(kit, 'chapter.novelize', seed.prose);
+    // The author revised the letter's date after play; the critic reports the change.
+    await runQueued(kit, 'chapter.cohesion', {
+      ...seed.critic,
+      factCorrections: [
+        { ref: 'P1', corrected: 'Maren has a letter addressed to Isla, dated last winter.' },
+      ],
+    });
+    expect(lastCriticPrompt()).toContain(
+      'P1 [object] Maren has a letter addressed to Isla, dated next spring.',
+    );
+
+    await lockChapter(ctx, chapters[0]!.id);
+    const facts = await ctx.repos.ledger.listAll(project.id);
+    expect(facts.map((f) => f.statement)).toEqual([
+      'Maren has a letter addressed to Isla, dated last winter.',
+    ]);
+    const knowledge = await ctx.repos.knowledge.list(project.id);
+    expect(knowledge).toMatchObject([{ factId: facts[0]!.id }]);
+  });
+
+  it('drops a play fact the revised draft no longer contains', async () => {
+    const { ctx } = kit;
+    const { project, chapters } = await seededProject(ctx);
+    const seed = seedChapters[1];
+    kit.llm.push(seed.opening, seed.extraction);
+    await startChapter(ctx, chapters[0]!.id, recorder().sink);
+    await endChapter(ctx, chapters[0]!.id);
+    await runQueued(kit, 'chapter.novelize', seed.prose);
+    await runQueued(kit, 'chapter.cohesion', {
+      ...seed.critic,
+      factCorrections: [{ ref: 'P1', corrected: '' }],
+    });
+
+    await lockChapter(ctx, chapters[0]!.id);
+    expect(await ctx.repos.ledger.listAll(project.id)).toEqual([]);
+  });
+
   it('rolls the whole lock back when any part of it fails', async () => {
     const { ctx } = kit;
     const { project, chapters } = await seededProject(ctx);

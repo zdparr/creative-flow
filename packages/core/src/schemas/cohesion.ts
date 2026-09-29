@@ -47,12 +47,34 @@ export const criticOutputSchema = z.object({
   checkpointsMet: z
     .array(z.object({ character: z.string(), chapter: z.number().int() }))
     .describe('Arc checkpoints due by this chapter that the draft clearly meets'),
+  factCorrections: z
+    .array(
+      z.object({
+        ref: z.string().describe('The fact ref, like "P3"'),
+        corrected: z
+          .string()
+          .describe('The fact as this draft establishes it; empty if the draft drops it entirely'),
+      }),
+    )
+    .default([])
+    .describe(
+      'Facts recorded during play that this draft changes or no longer contains; omit facts the draft keeps as they are',
+    ),
   summary: z
     .string()
     .describe('A 300-500 word summary of the chapter as written, for later chapters to read'),
 });
 export type CriticOutput = z.infer<typeof criticOutputSchema>;
 export type PlantedPromise = CriticOutput['promisesPlanted'][number];
+
+/**
+ * A fact recorded during play that the draft revised: the lock commits `corrected` in its
+ * place, or nothing when `corrected` is empty. Keyed by the original statement.
+ */
+export interface FactCorrection {
+  statement: string;
+  corrected: string;
+}
 
 /** A stored issue: the critic's (or a rule's) finding with a stable id for waivers. */
 export interface CohesionIssue extends z.infer<typeof cohesionIssueSchema> {

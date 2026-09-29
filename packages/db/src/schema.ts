@@ -5,6 +5,7 @@ import {
   type ChronicleExtraction,
   type CohesionIssue,
   type DriftDetails,
+  type FactCorrection,
   type InterviewAnswer,
   type InterviewQuestion,
   type OutlineChapter,
@@ -281,7 +282,8 @@ export const cohesionReports = pgTable('cohesion_reports', {
   issues: jsonb('issues').$type<CohesionIssue[]>().notNull(),
   blockerCount: integer('blocker_count').notNull().default(0),
   waived: jsonb('waived').$type<Waiver[]>().notNull().default([]),
-  // Proposals the lock commits: the chapter summary, promises paid, and arc checkpoints met.
+  // Proposals the lock commits: the chapter summary, promises paid, arc checkpoints met, and
+  // corrections to the facts recorded during play.
   summary: text('summary'),
   paidPromiseIds: uuid('paid_promise_ids').array().notNull().default([]),
   plantedPromises: jsonb('planted_promises').$type<PlantedPromise[]>().notNull().default([]),
@@ -289,6 +291,7 @@ export const cohesionReports = pgTable('cohesion_reports', {
     .$type<{ character: string; chapter: number }[]>()
     .notNull()
     .default([]),
+  factCorrections: jsonb('fact_corrections').$type<FactCorrection[]>().notNull().default([]),
   jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });

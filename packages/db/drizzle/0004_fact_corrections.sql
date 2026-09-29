@@ -1,0 +1,1 @@
+ALTER TABLE "cohesion_reports" ADD COLUMN "fact_corrections" jsonb DEFAULT '[]'::jsonb NOT NULL;

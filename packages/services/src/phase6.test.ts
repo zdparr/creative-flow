@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getReview, lockChapter } from './drafting.js';
 import { resolveDrift } from './drift.js';
+import { knowledgeItems } from './state.js';
 import { getPlayState, startChapter, submitTurn } from './play.js';
 import { decideReplanItem, getReplans, unlockChapter } from './replan.js';
 import {
@@ -171,6 +172,45 @@ describe('Phase 6: drift', () => {
     expect((await ctx.repos.ledger.listActive(setup.project.id)).map((f) => f.statement)).toEqual([
       'The lamp lens was repaired.',
     ]);
+  });
+
+  it('a character who knew a superseded fact knows its correction', async () => {
+    const { ctx } = kit;
+    const setup = await writingProject(ctx);
+    const character = await ctx.repos.characters.create({
+      projectId: setup.project.id,
+      name: 'Ossian Thray',
+      tier: 'major',
+      status: 'approved',
+      firstChapter: 1,
+    });
+    const old = await ctx.repos.ledger.add({
+      projectId: setup.project.id,
+      chapterId: setup.chapter1.id,
+      kind: 'event',
+      statement: 'Prince Alaric will be crowned.',
+      entities: [],
+    });
+    await ctx.repos.knowledge.add([
+      {
+        projectId: setup.project.id,
+        characterId: character.id,
+        factId: old.id,
+        learnedChapter: 1,
+        howLearned: 'witnessed in chapter 1',
+      },
+    ]);
+    const fixed = await ctx.repos.ledger.add({
+      projectId: setup.project.id,
+      chapterId: setup.chapter1.id,
+      kind: 'event',
+      statement: 'Prince Edmund will be crowned.',
+      entities: [],
+    });
+    await ctx.repos.ledger.supersede(old.id, fixed.id);
+
+    const known = await knowledgeItems(ctx, setup.project.id);
+    expect(known.map((k) => k.statement)).toEqual(['Prince Edmund will be crowned.']);
   });
 });
 

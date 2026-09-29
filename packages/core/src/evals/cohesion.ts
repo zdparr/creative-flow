@@ -74,6 +74,7 @@ async function check(chapter: 2 | 3, expected: string[]) {
     ],
     checkpointsDue: [],
     candidatePromises: [],
+    pendingFacts: [],
   });
   const paid = new Set(out.paidPromiseIds);
   const rules = ruleIssues({

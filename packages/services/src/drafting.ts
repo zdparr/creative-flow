@@ -3,6 +3,7 @@ import {
   type CohesionIssue,
   ConflictError,
   type CriticInput,
+  type FactCorrection,
   GateError,
   NotFoundError,
   type NovelizerEvent,
@@ -75,6 +76,22 @@ async function chapterCast(ctx: ServiceContext, basics: ChapterBasics, character
     if (c) ids.add(c.id);
   }
   return { chronicle, cast: characters.filter((c) => ids.has(c.id)) };
+}
+
+/** The facts recorded during play in canon scenes, one per statement, in chronicle order. */
+function recordedFacts(
+  chronicle: { extracted: { facts: { kind: string; statement: string }[] } }[],
+) {
+  const seen = new Set<string>();
+  return chronicle
+    .flatMap((e) => e.extracted.facts)
+    .filter((f) => {
+      const key = f.statement.trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((f, i) => ({ ref: `P${i + 1}`, kind: f.kind, statement: f.statement }));
 }
 
 // ---------- chapter.novelize ----------
@@ -184,6 +201,7 @@ async function cohesionContext(ctx: ServiceContext, basics: ChapterBasics, prose
         .map((cp) => ({ character: c.name, chapter: cp.chapter, description: cp.description })),
     ),
     candidatePromises: chronicle.flatMap((e) => e.extracted.promises.map((p) => p.description)),
+    pendingFacts: recordedFacts(chronicle),
   };
   return { input, openPromises };
 }
@@ -212,6 +230,12 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
   );
 
   const paid = new Set(out.paidPromiseIds);
+  const recorded = new Map(criticInput.pendingFacts.map((f) => [f.ref, f.statement]));
+  const factCorrections: FactCorrection[] = out.factCorrections.flatMap((c) => {
+    const statement = recorded.get(c.ref);
+    const corrected = c.corrected.trim();
+    return statement && corrected !== statement ? [{ statement, corrected }] : [];
+  });
   const rules = ruleIssues({
     paragraphs,
     bannedPhrases: bible.styleGuide.bannedPhrases,
@@ -233,6 +257,7 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
     paidPromiseIds: out.paidPromiseIds,
     plantedPromises: out.promisesPlanted,
     checkpointsMet: out.checkpointsMet,
+    factCorrections,
     jobId,
   });
   // A re-check keeps the author's waivers for issues it finds again.
@@ -637,9 +662,10 @@ export async function applyFix(
 // ---------- lock ----------
 
 /**
- * Locks a chapter. In one transaction: commits the chapter's pending ledger facts, knowledge
- * entries, promise registry changes, and card versions (arc checkpoints met); writes the
- * summary; snapshots all project state; and sets the chapter locked. Then queues the re-plan.
+ * Locks a chapter. In one transaction: commits the chapter's pending ledger facts (as revised by
+ * the checked draft), knowledge entries, promise registry changes, and card versions (arc
+ * checkpoints met); writes the summary; snapshots all project state; and sets the chapter
+ * locked. Then queues the re-plan.
  */
 export async function lockChapter(ctx: ServiceContext, chapterId: string) {
   const review = await getReview(ctx, chapterId);
@@ -677,12 +703,20 @@ export async function lockChapter(ctx: ServiceContext, chapterId: string) {
   const already = new Set(
     existingFacts.filter((f) => f.chapterId === chapterId).map((f) => f.statement.toLowerCase()),
   );
+  // Play recorded these facts; the author may have revised the draft since, so each is committed
+  // as the checked draft has it, or not at all if the draft dropped it.
+  const corrections = new Map(
+    report!.factCorrections.map((c) => [c.statement.trim().toLowerCase(), c.corrected]),
+  );
   const newFacts = chronicle
     .filter((e) => e.isCanon)
     .flatMap((e) =>
-      e.extracted.facts
-        .filter((f) => !already.has(f.statement.toLowerCase()))
-        .map((f) => ({ fact: f, event: e })),
+      e.extracted.facts.flatMap((f) => {
+        const statement = corrections.get(f.statement.trim().toLowerCase()) ?? f.statement;
+        if (!statement || already.has(statement.toLowerCase())) return [];
+        already.add(statement.toLowerCase());
+        return [{ fact: { ...f, statement }, event: e }];
+      }),
     );
   const knownPromises = new Set(
     registry.filter((p) => p.plantedChapter === N).map((p) => p.description.toLowerCase()),

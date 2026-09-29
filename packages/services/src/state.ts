@@ -88,14 +88,22 @@ export async function knowledgeItems(
     ctx.repos.ledger.listAll(projectId),
     ctx.repos.promises.list(projectId),
   ]);
-  const factById = new Map(facts.map((f) => [f.id, f.statement]));
+  const byId = new Map(facts.map((f) => [f.id, f]));
+  // A superseded fact is known as the fact that replaced it (a corrected name, say).
+  const current = (id: string) => {
+    let fact = byId.get(id);
+    for (let hops = 0; fact?.supersededBy && hops < facts.length; hops++) {
+      fact = byId.get(fact.supersededBy);
+    }
+    return fact?.statement;
+  };
   const promiseById = new Map(promises.map((p) => [p.id, p.description]));
   return entries
     .filter((e) => e.learnedChapter < beforeChapter)
     .map((e) => ({
       characterId: e.characterId,
       statement:
-        (e.factId && factById.get(e.factId)) || (e.promiseId && promiseById.get(e.promiseId)) || '',
+        (e.factId && current(e.factId)) || (e.promiseId && promiseById.get(e.promiseId)) || '',
       learnedChapter: e.learnedChapter,
       howLearned: e.howLearned,
     }))

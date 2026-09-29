@@ -20,6 +20,8 @@ export interface CriticInput {
   checkpointsDue: { character: string; chapter: number; description: string }[];
   /** Setups the extractor noticed during play, as hints for promisesPlanted. */
   candidatePromises: string[];
+  /** Facts recorded during play, not yet in the ledger; the lock commits them as the draft has them. */
+  pendingFacts: { ref: string; kind: string; statement: string }[];
 }
 
 /** What the book has established, as prompt sections (everything but the draft itself). */
@@ -35,6 +37,7 @@ export function cohesionSections(input: CriticInput): string[] {
     `# Open promises\n${input.openPromises.map((p) => `- id ${p.id}: ${p.description} (pay off in chapters ${p.from}-${p.to})`).join('\n') || '(none)'}`,
     `# Arc checkpoints due by this chapter\n${input.checkpointsDue.map((c) => `- ${c.character}, chapter ${c.chapter}: ${c.description}`).join('\n') || '(none)'}`,
     `# Setups noticed during play\n${input.candidatePromises.map((p) => `- ${p}`).join('\n') || '(none)'}`,
+    `# Facts recorded during play (this chapter, not yet in the ledger)\n${input.pendingFacts.map((f) => `- ${f.ref} [${f.kind}] ${f.statement}`).join('\n') || '(none)'}`,
   ];
 }
 
@@ -52,6 +55,7 @@ export async function runCohesionCritic(
 ): Promise<CriticOutput> {
   const promiseIds = new Set(input.openPromises.map((p) => p.id));
   const names = new Set(input.cards.map((c) => c.name.toLowerCase()));
+  const factRefs = new Set(input.pendingFacts.map((f) => f.ref));
   return runStructuredAgent(ctx, {
     agent: 'critic',
     prompt: loadPrompt('critic'),
@@ -72,6 +76,9 @@ export async function runCohesionCritic(
       ...out.checkpointsMet
         .filter((c) => !names.has(c.character.toLowerCase()))
         .map((c) => `checkpointsMet: "${c.character}" is not a character in this chapter`),
+      ...out.factCorrections
+        .filter((f) => !factRefs.has(f.ref))
+        .map((f) => `factCorrections: "${f.ref}" is not a fact recorded during play`),
       ...out.promisesPlanted
         .filter(
           (p) =>
