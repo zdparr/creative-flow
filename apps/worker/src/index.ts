@@ -36,6 +36,7 @@ const services = createServiceContext({
     models: { fast: env.MODEL_FAST, strong: env.MODEL_STRONG },
     structuredOutputs: env.STRUCTURED_OUTPUTS,
   }),
+  deepen: env.DEEPEN_PASS,
   // Jobs chain follow-up jobs: novelize -> cohesion, lock -> re-plan.
   enqueue: async (job) => {
     await queue.add(job.type, job.data, { ...JOB_OPTIONS, jobId: job.id });

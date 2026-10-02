@@ -1,6 +1,8 @@
 import {
   type CardContent,
   type CohesionIssue,
+  type CommitmentOutcome,
+  type CommitmentStatus,
   ConflictError,
   type CriticInput,
   type FactCorrection,
@@ -18,6 +20,8 @@ import {
   runFixer,
   runNovelizer,
   draftParagraphs,
+  filterByEntities,
+  runDeepener,
   validateOutline,
   wordCount,
 } from '@storyforge/core';
@@ -25,7 +29,15 @@ import { type CharacterRow, type ChapterRow, cardsAsOf, inTransaction } from '@s
 import { cardsForChapter, ensureCast, unapprovedCharactersIn } from './characters.js';
 import type { ServiceContext } from './context.js';
 import { requestReplan, reviseOutline } from './replan.js';
-import { type ChapterBasics, chapterBasics, knowledgeItems, ledgerFacts } from './state.js';
+import {
+  type ChapterBasics,
+  type CommitmentInForce,
+  chapterBasics,
+  commitmentsInForce,
+  knowledgeItems,
+  ledgerFacts,
+  pendingCommitments,
+} from './state.js';
 
 export interface NovelizeJobInput {
   projectId: string;
@@ -114,8 +126,10 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
   const nameOf = new Map(characters.map((c) => [c.id, c.name]));
   const placeOf = new Map(locations.map((l) => [l.id, l.name]));
   const turnById = new Map(turns.map((t) => [t.id, t]));
+  const pivotal = new Set(plan.requiredBeats.filter((b) => b.pivotal).map((b) => b.id));
 
   const events: NovelizerEvent[] = chronicle.map((e) => ({
+    pivotal: e.beatIds.some((id) => pivotal.has(id)),
     summary: e.summary,
     characters: e.characters.map((id) => nameOf.get(id)).filter((n): n is string => !!n),
     location: e.locationId ? (placeOf.get(e.locationId) ?? null) : null,
@@ -130,21 +144,24 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
 
   const previous = chapters.find((c) => c.number === chapter.number - 1);
   const previousDraft = previous ? await ctx.repos.drafts.current(previous.id) : null;
-  const { prose } = await runNovelizer(
-    ctx.agentContext(project.id, { jobId, chapterId: chapter.id }),
-    {
-      bible,
-      chapterNumber: chapter.number,
-      plan,
-      events,
-      cards: await cardsForChapter(ctx, project.id, cast, chapter.number),
-      previousProse: previousDraft?.prose ?? null,
-      targetWords: Math.round(bible.spine.targetWordCount / bible.spine.chapterCount),
-      ...(input.notes ? { notes: input.notes, currentDraft: current?.prose ?? '' } : {}),
-    },
-  );
+  const agent = ctx.agentContext(project.id, { jobId, chapterId: chapter.id });
+  const [cards, commitments] = await Promise.all([
+    cardsForChapter(ctx, project.id, cast, chapter.number),
+    chapterCommitments(ctx, basics, chronicle, characters, cast),
+  ]);
+  const { prose } = await runNovelizer(agent, {
+    bible,
+    chapterNumber: chapter.number,
+    plan,
+    events,
+    cards,
+    commitments,
+    previousProse: previousDraft?.prose ?? null,
+    targetWords: Math.round(bible.spine.targetWordCount / bible.spine.chapterCount),
+    ...(input.notes ? { notes: input.notes, currentDraft: current?.prose ?? '' } : {}),
+  });
 
-  const draft = await ctx.repos.drafts.create({
+  let draft = await ctx.repos.drafts.create({
     projectId: project.id,
     chapterId: chapter.id,
     prose,
@@ -152,8 +169,71 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
     notes: input.notes ?? null,
     jobId,
   });
+  // The deepening pass is a separate version, so the author can compare it with the draft.
+  if (ctx.deepen !== false) {
+    try {
+      const deep = await runDeepener(agent, {
+        bible,
+        chapterNumber: chapter.number,
+        plan,
+        events,
+        cards,
+        commitments,
+        threads: await chapterThreads(ctx, basics, chronicle),
+        prose,
+      });
+      draft = await ctx.repos.drafts.create({
+        projectId: project.id,
+        chapterId: chapter.id,
+        prose: deep.prose,
+        wordCount: wordCount(deep.prose),
+        notes: `Deepening pass (+${Math.round(deep.retention.growth * 100)}%)`,
+        jobId,
+      });
+    } catch (err) {
+      // The undeepened draft stands; the author still gets a chapter to review.
+      console.warn(`Deepening pass skipped for chapter ${chapter.number}:`, (err as Error).message);
+    }
+  }
   await requestCohesion(ctx, chapter, draft.id);
   return draft.id;
+}
+
+/**
+ * Secrets and instructions in force for the chapter's cast: those committed in earlier chapters
+ * that involve someone in it, and those given during this chapter's play.
+ */
+async function chapterCommitments(
+  ctx: ServiceContext,
+  basics: ChapterBasics,
+  chronicle: Awaited<ReturnType<typeof chapterCast>>['chronicle'],
+  characters: CharacterRow[],
+  cast: CharacterRow[],
+): Promise<CommitmentInForce[]> {
+  const { chapter, project } = basics;
+  const castIds = new Set(cast.map((c) => c.id));
+  const earlier = filterByEntities(
+    await commitmentsInForce(ctx, project.id, chapter.number),
+    castIds,
+    false,
+  );
+  return [...earlier, ...pendingCommitments(ctx, chapter.number, chronicle, characters)];
+}
+
+/** Open mysteries and setups the chapter can close on: open promises and this chapter's plants. */
+async function chapterThreads(
+  ctx: ServiceContext,
+  basics: ChapterBasics,
+  chronicle: Awaited<ReturnType<typeof chapterCast>>['chronicle'],
+): Promise<string[]> {
+  const N = basics.chapter.number;
+  const registry = await ctx.repos.promises.list(basics.project.id);
+  const threads = [
+    ...registry.filter((p) => p.status === 'open' && p.plantedChapter < N && p.window.to >= N),
+    ...basics.plan.promises.planted,
+    ...chronicle.flatMap((e) => e.extracted.promises),
+  ].map((p) => p.description.trim());
+  return [...new Map(threads.filter(Boolean).map((t) => [t.toLowerCase(), t])).values()];
 }
 
 // ---------- chapter.cohesion ----------
@@ -173,7 +253,10 @@ async function cohesionContext(ctx: ServiceContext, basics: ChapterBasics, prose
     ledgerFacts(ctx, project.id, N),
     ctx.repos.promises.list(project.id),
   ]);
-  const cards = await cardsForChapter(ctx, project.id, cast, N);
+  const [cards, commitments] = await Promise.all([
+    cardsForChapter(ctx, project.id, cast, N),
+    chapterCommitments(ctx, basics, chronicle, characters, cast),
+  ]);
   const nameOf = new Map(characters.map((c) => [c.id, c.name]));
   // Open as of this chapter: planted earlier and not paid before it (a recheck may see later state).
   const openPromises = registry.filter(
@@ -202,8 +285,9 @@ async function cohesionContext(ctx: ServiceContext, basics: ChapterBasics, prose
     ),
     candidatePromises: chronicle.flatMap((e) => e.extracted.promises.map((p) => p.description)),
     pendingFacts: recordedFacts(chronicle),
+    commitments: commitments.map((c, i) => ({ ...c, ref: `C${i + 1}` })),
   };
-  return { input, openPromises };
+  return { input, openPromises, commitments };
 }
 
 /** The chapter.cohesion job: the critic's report plus rule checks, saved against the draft. */
@@ -222,7 +306,11 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
   }
 
   const N = chapter.number;
-  const { input: criticInput, openPromises } = await cohesionContext(ctx, basics, draft.prose);
+  const {
+    input: criticInput,
+    openPromises,
+    commitments,
+  } = await cohesionContext(ctx, basics, draft.prose);
   const { paragraphs } = criticInput;
   const out = await runCohesionCritic(
     ctx.agentContext(project.id, { jobId, chapterId: chapter.id }),
@@ -258,6 +346,10 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
     plantedPromises: out.promisesPlanted,
     checkpointsMet: out.checkpointsMet,
     factCorrections,
+    commitmentsTested: out.commitmentsTested.flatMap((t) => {
+      const c = commitments[Number(t.ref.slice(1)) - 1];
+      return c ? [{ commitmentId: c.id, content: c.content, outcome: t.outcome }] : [];
+    }),
     jobId,
   });
   // A re-check keeps the author's waivers for issues it finds again.
@@ -705,6 +797,10 @@ export async function applyFixes(
 
 // ---------- lock ----------
 
+/** A commitment's status after a chapter tested it. */
+const statusAfter = (outcome: CommitmentOutcome): CommitmentStatus =>
+  outcome === 'broken' ? 'broken' : outcome === 'released' ? 'released' : 'active';
+
 /**
  * Locks a chapter. In one transaction: commits the chapter's pending ledger facts (as revised by
  * the checked draft), knowledge entries, promise registry changes, and card versions (arc
@@ -725,16 +821,25 @@ export async function lockChapter(ctx: ServiceContext, chapterId: string) {
   if (problems.length) throw new GateError('This chapter cannot lock yet', problems);
 
   const N = chapter.number;
-  const [report, characters, locations, chronicle, existingFacts, registry, versions] =
-    await Promise.all([
-      ctx.repos.cohesion.latestForChapter(chapterId),
-      ctx.repos.characters.list(project.id),
-      ctx.repos.characters.listLocations(project.id),
-      ctx.repos.play.listChronicle(chapterId),
-      ctx.repos.ledger.listActive(project.id),
-      ctx.repos.promises.list(project.id),
-      ctx.repos.characters.listVersionsForProject(project.id),
-    ]);
+  const [
+    report,
+    characters,
+    locations,
+    chronicle,
+    existingFacts,
+    registry,
+    versions,
+    existingCommitments,
+  ] = await Promise.all([
+    ctx.repos.cohesion.latestForChapter(chapterId),
+    ctx.repos.characters.list(project.id),
+    ctx.repos.characters.listLocations(project.id),
+    ctx.repos.play.listChronicle(chapterId),
+    ctx.repos.ledger.listActive(project.id),
+    ctx.repos.promises.list(project.id),
+    ctx.repos.characters.listVersionsForProject(project.id),
+    ctx.repos.commitments.list(project.id),
+  ]);
   const entityIds = (names: string[]) => [
     ...new Set(
       names.flatMap((n) => {
@@ -798,6 +903,39 @@ export async function lockChapter(ctx: ServiceContext, chapterId: string) {
     }
 
     await repos.promises.markPaid(report!.paidPromiseIds, N);
+
+    // Commitments given in this chapter's play enter the ledger, with any test the draft made of
+    // them; earlier ones the draft tested record it. A re-lock does not add them twice.
+    const tests = report!.commitmentsTested;
+    const committed = new Set(
+      existingCommitments
+        .filter((c) => c.chapterId === chapterId)
+        .map((c) => c.content.trim().toLowerCase()),
+    );
+    for (const c of pendingCommitments(ctx, N, chronicle, characters)) {
+      const key = c.content.trim().toLowerCase();
+      if (committed.has(key)) continue;
+      const test = tests.find(
+        (t) => t.commitmentId === null && t.content.trim().toLowerCase() === key,
+      );
+      await repos.commitments.add({
+        projectId: project.id,
+        chapterId,
+        kind: c.kind,
+        giver: c.from,
+        recipients: c.to,
+        content: c.content,
+        scope: c.scope,
+        words: c.words,
+        entities: c.entities,
+        status: test ? statusAfter(test.outcome) : 'active',
+        testedChapters: test ? [N] : [],
+      });
+    }
+    for (const t of tests) {
+      if (t.commitmentId)
+        await repos.commitments.recordTest(t.commitmentId, N, statusAfter(t.outcome));
+    }
     for (const p of report!.plantedPromises) {
       if (knownPromises.has(p.description.toLowerCase())) continue;
       await repos.promises.add({
@@ -845,6 +983,7 @@ export async function lockChapter(ctx: ServiceContext, chapterId: string) {
       ledger: await repos.ledger.listAll(project.id),
       promises: await repos.promises.list(project.id),
       knowledge: await repos.knowledge.list(project.id),
+      commitments: await repos.commitments.list(project.id),
       characters: await repos.characters.list(project.id),
       cardVersions: await repos.characters.listVersionsForProject(project.id),
     });

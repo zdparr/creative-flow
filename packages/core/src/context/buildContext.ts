@@ -38,6 +38,32 @@ export interface ContextPromise {
   entities: string[];
 }
 
+/** A secret, instruction, promise, or warning in force between characters. */
+export interface ContextCommitment {
+  kind: string;
+  from: string;
+  to: string[];
+  content: string;
+  scope: string;
+  /** The line as spoken; empty if it was not said aloud. */
+  words: string;
+  /** Chapter it was given in. */
+  chapter: number;
+  /** Chapters that have put it under pressure. */
+  tested: number[];
+  /** Ids of the giver and recipients, for scoping. */
+  entities: string[];
+}
+
+export function renderCommitment(c: ContextCommitment): string {
+  return [
+    `${c.from} to ${c.to.join(', ') || '(unknown)'} (${c.kind}, chapter ${c.chapter}): ${c.content}`,
+    c.scope ? ` Scope: ${c.scope}.` : '',
+    c.words ? ` As said: "${c.words}"` : '',
+    c.tested.length ? ` Tested in chapter ${c.tested.join(', ')}.` : ' Not yet tested.',
+  ].join('');
+}
+
 export interface KnowledgeItem {
   characterId: string;
   statement: string;
@@ -72,6 +98,8 @@ export interface DirectorContextInput {
   lockedSummaries: { number: number; summary: string }[];
   facts: ContextFact[];
   promises: ContextPromise[];
+  /** Commitments in force; only those involving someone in the scene are included. */
+  commitments?: ContextCommitment[];
   /** Drift the author chose to steer back from; the director works the plan back in. */
   steer?: string[];
 }
@@ -159,6 +187,7 @@ export function buildDirectorContext(
     (p) => p.plantedChapter <= input.chapterNumber && p.payoffChapter >= input.chapterNumber,
   );
   const relevantPromises = filterByEntities(promises, sceneEntities, true);
+  const commitments = filterByEntities(input.commitments ?? [], sceneEntities, false);
   // Most important and newest last, so trimming drops from the front.
   let facts = filterByEntities(input.facts, sceneEntities, false).sort(
     (a, b) => (SEVERITY[a.kind] ?? 0) - (SEVERITY[b.kind] ?? 0) || a.chapter - b.chapter,
@@ -174,6 +203,9 @@ export function buildDirectorContext(
       facts.length ? `## Continuity facts\n${facts.map((f) => `- ${f.statement}`).join('\n')}` : '',
       relevantPromises.length
         ? `## Open promises\n${relevantPromises.map((p) => `- ${p.description} (pay off by chapter ${p.payoffChapter})`).join('\n')}`
+        : '',
+      commitments.length
+        ? `## Secrets and instructions in force (between characters in the scene)\n${commitments.map((c) => `- ${renderCommitment(c)}`).join('\n')}`
         : '',
       `## Story so far this chapter\n${turns.map(renderTurn).join('\n\n') || '(The chapter has not started.)'}`,
     ]
@@ -208,10 +240,13 @@ export interface NpcContextInput {
   otherCharactersInScene: { name: string; relationship: string }[];
   recentTurns: ContextTurn[];
   situation: string;
+  /** Every commitment in force; filtered here to the ones this character gave or received. */
+  commitments?: ContextCommitment[];
 }
 
 export function buildNpcContext(input: NpcContextInput): string {
   const own = input.knowledge.filter((k) => k.characterId === input.character.id);
+  const bound = (input.commitments ?? []).filter((c) => c.entities.includes(input.character.id));
   // Only turns that mention this character, so the NPC reacts to what it witnessed.
   const name = input.character.name.split(' ')[0]!.toLowerCase();
   const turns = input.recentTurns.filter((t) => t.content.toLowerCase().includes(name)).slice(-8);
@@ -219,6 +254,11 @@ export function buildNpcContext(input: NpcContextInput): string {
     `# You are ${input.character.name}`,
     renderCard(input.character),
     `## What you know\n${own.map((k) => `- ${k.statement} (since chapter ${k.learnedChapter}, ${k.howLearned})`).join('\n') || '(Only what is on your card and what you have witnessed below.)'}`,
+    ...(bound.length
+      ? [
+          `## Secrets and instructions you are party to\n${bound.map((c) => `- ${renderCommitment(c)}`).join('\n')}`,
+        ]
+      : []),
     `## Others here\n${input.otherCharactersInScene.map((o) => `- ${o.name}: ${o.relationship}`).join('\n') || '(no one else)'}`,
     `## Recent moments involving you\n${turns.map(renderTurn).join('\n\n') || '(none)'}`,
     `## Right now\n${input.situation}`,

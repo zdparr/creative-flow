@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "db:generate": "pnpm --filter @storyforge/db generate",
     "db:migrate": "pnpm --filter @storyforge/db migrate",
-    "eval:cohesion": "pnpm --filter @storyforge/core build && node packages/core/dist/evals/cohesion.js"
+    "eval:cohesion": "pnpm --filter @storyforge/core build && node packages/core/dist/evals/cohesion.js",
+    "eval:prose": "pnpm --filter @storyforge/core build && node packages/core/dist/evals/prose.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

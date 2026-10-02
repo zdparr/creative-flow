@@ -36,3 +36,12 @@ export const PROMISE_STATUSES = ['open', 'paid', 'dropped'] as const;
 export const DRIFT_RESOLUTIONS = ['steer', 'adopt'] as const;
 export const JOB_STATUSES = ['queued', 'running', 'succeeded', 'failed'] as const;
 export const EXPORT_FORMATS = ['epub', 'docx', 'pdf', 'markdown'] as const;
+// Secrets, instructions, promises, and warnings one character gives another (the commitments
+// ledger). Distinct from PROMISE_TYPES, which are setups made to the reader.
+export const COMMITMENT_KINDS = ['secret', 'instruction', 'promise', 'warning'] as const;
+export type CommitmentKind = (typeof COMMITMENT_KINDS)[number];
+export const COMMITMENT_STATUSES = ['active', 'broken', 'released'] as const;
+export type CommitmentStatus = (typeof COMMITMENT_STATUSES)[number];
+/** How a chapter tested a commitment in force. */
+export const COMMITMENT_OUTCOMES = ['kept', 'partly_revealed', 'broken', 'released'] as const;
+export type CommitmentOutcome = (typeof COMMITMENT_OUTCOMES)[number];

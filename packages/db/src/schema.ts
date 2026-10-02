@@ -4,6 +4,7 @@ import {
   type ChapterPromises,
   type ChronicleExtraction,
   type CohesionIssue,
+  type CommitmentStatus,
   type DriftDetails,
   type FactCorrection,
   type InterviewAnswer,
@@ -12,6 +13,7 @@ import {
   type PlantedPromise,
   type ReplanItem,
   type Spine,
+  type StoredCommitmentTest,
   type StyleGuide,
   type Waiver,
   type World,
@@ -292,6 +294,10 @@ export const cohesionReports = pgTable('cohesion_reports', {
     .notNull()
     .default([]),
   factCorrections: jsonb('fact_corrections').$type<FactCorrection[]>().notNull().default([]),
+  commitmentsTested: jsonb('commitments_tested')
+    .$type<StoredCommitmentTest[]>()
+    .notNull()
+    .default([]),
   jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });
@@ -360,6 +366,32 @@ export const promises = pgTable(
     ...timestamps(),
   },
   (t) => [index('promises_entities_idx').using('gin', t.entities)],
+);
+
+// Secrets, instructions, promises, and warnings between characters, committed at lock. Distinct
+// from `promises`, which are setups made to the reader.
+export const commitments = pgTable(
+  'commitments',
+  {
+    id: id(),
+    projectId: projectId(),
+    // The chapter it was given in.
+    chapterId: uuid('chapter_id')
+      .notNull()
+      .references(() => chapters.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    giver: text('giver').notNull(),
+    recipients: text('recipients').array().notNull().default([]),
+    content: text('content').notNull(),
+    scope: text('scope').notNull().default(''),
+    words: text('words').notNull().default(''),
+    // Giver and recipients, for scoping like ledger facts.
+    entities: uuid('entities').array().notNull().default([]),
+    status: text('status').$type<CommitmentStatus>().notNull().default('active'),
+    testedChapters: integer('tested_chapters').array().notNull().default([]),
+    ...timestamps(),
+  },
+  (t) => [index('commitments_entities_idx').using('gin', t.entities)],
 );
 
 export const knowledgeEntries = pgTable('knowledge_entries', {

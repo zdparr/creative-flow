@@ -1,12 +1,14 @@
 import {
   type BibleContent,
+  type ChronicleExtraction,
+  type ContextCommitment,
   type ContextFact,
   type ContextPromise,
   type KnowledgeItem,
   NotFoundError,
   type OutlineChapter,
 } from '@storyforge/core';
-import type { ChapterRow, Project } from '@storyforge/db';
+import type { ChapterRow, CharacterRow, Project } from '@storyforge/db';
 import { toBibleContent } from './bible.js';
 import type { ServiceContext } from './context.js';
 
@@ -108,6 +110,74 @@ export async function knowledgeItems(
       howLearned: e.howLearned,
     }))
     .filter((k) => k.statement);
+}
+
+export type CommitmentInForce = ContextCommitment & { id: string | null };
+
+/**
+ * Commitments given before a chapter that are still in force there: active ones, plus any a
+ * later chapter broke or released (a recheck of this chapter sees them as they stood).
+ */
+export async function commitmentsInForce(
+  ctx: ServiceContext,
+  projectId: string,
+  beforeChapter: number,
+): Promise<CommitmentInForce[]> {
+  const [rows, numbers] = await Promise.all([
+    ctx.repos.commitments.list(projectId),
+    chapterNumbers(ctx, projectId),
+  ]);
+  const chapterOf = (r: { chapterId: string }) => numbers.get(r.chapterId) ?? 0;
+  return rows
+    .filter(
+      (r) =>
+        chapterOf(r) < beforeChapter &&
+        (r.status === 'active' || r.testedChapters.some((t) => t >= beforeChapter)),
+    )
+    .map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      from: r.giver,
+      to: r.recipients,
+      content: r.content,
+      scope: r.scope,
+      words: r.words,
+      chapter: chapterOf(r),
+      tested: r.testedChapters.filter((t) => t < beforeChapter),
+      entities: r.entities,
+    }));
+}
+
+/** Commitments given during a chapter's canon play, not yet committed (one per content). */
+export function pendingCommitments(
+  ctx: ServiceContext,
+  chapterNumber: number,
+  chronicle: { isCanon: boolean; extracted: ChronicleExtraction }[],
+  characters: CharacterRow[],
+): CommitmentInForce[] {
+  const seen = new Set<string>();
+  const idOf = (name: string) => ctx.repos.characters.findByName(characters, name)?.id;
+  return chronicle
+    .filter((e) => e.isCanon)
+    .flatMap((e) => e.extracted.commitments ?? [])
+    .filter((c) => {
+      const key = c.content.trim().toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((c) => ({
+      id: null,
+      kind: c.kind,
+      from: c.from,
+      to: c.to,
+      content: c.content,
+      scope: c.scope,
+      words: c.words,
+      chapter: chapterNumber,
+      tested: [],
+      entities: [...new Set([c.from, ...c.to].map(idOf).filter((id): id is string => !!id))],
+    }));
 }
 
 /**

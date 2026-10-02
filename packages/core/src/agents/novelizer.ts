@@ -1,7 +1,12 @@
-import { type CharacterCard, renderCard } from '../context/buildContext.js';
+import {
+  type CharacterCard,
+  type ContextCommitment,
+  renderCard,
+  renderCommitment,
+} from '../context/buildContext.js';
 import { costUsd } from '../llm/pricing.js';
 import type { AgentContext } from '../llm/runAgent.js';
-import { withHouseStyle } from '../prose/houseStyle.js';
+import { withProseStyle } from '../prose/houseStyle.js';
 import { proseProblems } from '../prose/rules.js';
 import { loadPrompt } from '../prompts/loader.js';
 import type { BibleContent } from '../schemas/bible.js';
@@ -16,6 +21,8 @@ export interface NovelizerEvent {
   authorNote: string | null;
   /** Lines actually spoken in play during this event. */
   dialogue: string[];
+  /** True when the event hits one of the plan's pivotal beats. */
+  pivotal?: boolean;
 }
 
 export interface NovelizerInput {
@@ -27,6 +34,8 @@ export interface NovelizerInput {
   /** Full prose of the previous chapter, for voice continuity. */
   previousProse: string | null;
   targetWords: number;
+  /** Secrets and instructions in force for this chapter's cast, including any given in its play. */
+  commitments?: ContextCommitment[];
   /** Regenerate with notes: the author's notes and the draft they are about. */
   notes?: string;
   currentDraft?: string;
@@ -37,16 +46,28 @@ export function keyDialogue(text: string): string[] {
   return [...text.matchAll(/["“]([^"”]{2,})["”]/g)].map((m) => m[1]!.trim());
 }
 
+/** The plan's pivotal beats as a prompt line, or nothing when none are marked. */
+export function pivotalBeats(plan: Pick<OutlineChapter, 'requiredBeats'>): string {
+  const pivotal = plan.requiredBeats.filter((b) => b.pivotal);
+  return pivotal.length
+    ? `\nPivotal moments (the chapter turns here):\n${pivotal.map((b) => `- ${b.description}`).join('\n')}`
+    : '';
+}
+
+/** The style guide with its sample paragraphs, for agents that write book prose. */
+export function styleGuideSection({ styleGuide }: BibleContent): string {
+  return `# Style guide\nPOV: ${styleGuide.pov}${styleGuide.povCharacter ? ` (${styleGuide.povCharacter})` : ''}\nTense: ${styleGuide.tense}\nRegister: ${styleGuide.register}\nBanned phrases: ${styleGuide.bannedPhrases.join('; ') || '(none)'}\n\nSample paragraphs:\n${styleGuide.samples.map((s) => `> ${s}`).join('\n\n')}`;
+}
+
 export function buildNovelizerPrompt(input: NovelizerInput): string {
-  const { styleGuide } = input.bible;
   const parts = [
-    `# Style guide\nPOV: ${styleGuide.pov}${styleGuide.povCharacter ? ` (${styleGuide.povCharacter})` : ''}\nTense: ${styleGuide.tense}\nRegister: ${styleGuide.register}\nBanned phrases: ${styleGuide.bannedPhrases.join('; ') || '(none)'}\n\nSample paragraphs:\n${styleGuide.samples.map((s) => `> ${s}`).join('\n\n')}`,
-    `# Chapter ${input.chapterNumber}: ${input.plan.title}\nPurpose: ${input.plan.purpose}\nTarget length: about ${input.targetWords} words.`,
+    styleGuideSection(input.bible),
+    `# Chapter ${input.chapterNumber}: ${input.plan.title}\nPurpose: ${input.plan.purpose}\nTarget length: about ${input.targetWords} words.${pivotalBeats(input.plan)}`,
     `# Characters in this chapter\n${input.cards.map(renderCard).join('\n') || '(none)'}`,
     `# Chronicle (every event, in order; write these and only these)\n${input.events
       .map((e, i) =>
         [
-          `${i + 1}. ${e.summary}`,
+          `${i + 1}. ${e.pivotal ? '(PIVOTAL) ' : ''}${e.summary}`,
           e.location ? `   Where: ${e.location}` : '',
           e.characters.length ? `   Who: ${e.characters.join(', ')}` : '',
           e.authorNote ? `   Author direction: ${e.authorNote}` : '',
@@ -60,6 +81,10 @@ export function buildNovelizerPrompt(input: NovelizerInput): string {
       )
       .join('\n')}`,
   ];
+  if (input.commitments?.length)
+    parts.push(
+      `# Secrets and instructions in force (keep characters consistent with these)\n${input.commitments.map((c) => `- ${renderCommitment(c)}`).join('\n')}`,
+    );
   if (input.previousProse)
     parts.push(`# Previous chapter (for voice continuity)\n${input.previousProse}`);
   if (input.notes) {
@@ -78,7 +103,7 @@ export async function runNovelizer(
   ctx: AgentContext,
   input: NovelizerInput,
 ): Promise<{ prose: string; problems: string[] }> {
-  const prompt = withHouseStyle(loadPrompt('novelizer'));
+  const prompt = withProseStyle(loadPrompt('novelizer'));
   let messages: { role: 'user' | 'assistant'; content: string }[] = [
     { role: 'user', content: buildNovelizerPrompt(input) },
   ];

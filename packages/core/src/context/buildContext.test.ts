@@ -174,3 +174,46 @@ function sizeWith(statement: string): number {
   );
   return ctx.tokens;
 }
+
+describe('commitments in play context', () => {
+  const commitment = (from: string, to: string, content: string, entities: string[]) => ({
+    kind: 'secret',
+    from,
+    to: [to],
+    content,
+    scope: 'no one',
+    words: '',
+    chapter: 1,
+    tested: [],
+    entities,
+  });
+  const commitments = [
+    commitment('Tomas Reyne', 'Maren Tull', 'tomas-maren-secret', ['tomas', 'maren']),
+    commitment('Ada Fenn', 'Old Hendry', 'clerk-ferryman-secret', ['clerk', 'hendry']),
+  ];
+
+  it('gives the director only commitments involving someone in the scene', () => {
+    const ctx = buildDirectorContext(input({ commitments }), 100_000);
+    expect(ctx.volatile).toContain('## Secrets and instructions in force');
+    expect(ctx.volatile).toContain('tomas-maren-secret');
+    expect(ctx.volatile).not.toContain('clerk-ferryman-secret');
+    const none = buildDirectorContext(input({ commitments: [commitments[1]!] }), 100_000);
+    expect(none.volatile).not.toContain('Secrets and instructions');
+  });
+
+  it('gives an NPC only the commitments they gave or received', () => {
+    const npc = (character: CharacterCard) =>
+      buildNpcContext({
+        character,
+        knowledge: [],
+        otherCharactersInScene: [],
+        recentTurns: [],
+        situation: 'now',
+        commitments,
+      });
+    expect(npc(tomas)).toContain('tomas-maren-secret');
+    expect(npc(tomas)).not.toContain('clerk-ferryman-secret');
+    expect(npc(clerk)).toContain('clerk-ferryman-secret');
+    expect(npc(clerk)).not.toContain('tomas-maren-secret');
+  });
+});

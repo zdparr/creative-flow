@@ -112,6 +112,18 @@ The spec asks for each phase to pass before the next begins. At the author's req
 - **Book tab:** chapters with status and word counts, the review, exports, the promise registry (extend, drop, reopen), the ledger, and usage by agent and by chapter. Play and job calls now record their chapter, so per-chapter cost is real.
 - **Not built:** the optional per-project budget (soft warning at 80%, hard stop at 100%).
 
+### Prose deepening and the commitments ledger (requested 2026-10-02)
+
+A human editor's pass over a test chapter ("The Weakest Light", in `packages/core/fixtures/weakest-light/`) kept 99.5% of the engine's words and added 11%, all interiority, consequence, and continuity. The engine now makes that pass itself.
+
+- **Deepening pass:** after the novelizer's draft, the `deepener` agent (strong tier, `prompts/deepener.md`) makes additive edits for eight craft layers: slowed pivotal moments, consequence and dilemma, plainly stated secrets, their recall under pressure, noticing who knows too much, a glimpse beneath authority, scene and chapter buttons, and mechanics. It answers with paragraph edits and inserts, never the whole chapter. A code guard rejects an answer that keeps under 98% of the draft's words in order, under 75% of any edited paragraph, or grows the chapter past 18% (the editor's pass clears all three; `retention.test.ts` checks it). One retry; after that the undeepened draft stands. The pass is its own draft version ("Deepening pass (+n%)"), so the author can compare it with the draft. `DEEPEN_PASS=false` turns it off.
+- **Novelizer** gets only the light layers: pivotal beats marked in the plan and chronicle, the commitments in force, and the prose mechanics. Its voice guidance is unchanged.
+- **Prose mechanics** (`prompts/prose-mechanics.md`, added with `withProseStyle` to the novelizer, deepener, and fixer): direct thought in `*italics*`, and self-questions end with question marks. Italics render in the review screen and in every export. Prettier skips the two prompts that show asterisk italics.
+- **Pivotal beats:** the outliner marks one to three required beats per chapter `pivotal` (optional, so existing outlines load; more than three fails validation).
+- **Commitments ledger** (`commitments` table): secrets, instructions, promises, and warnings one character gives another (who, to whom, content, scope, the words as spoken, chapter, status, chapters tested). Distinct from `promises`, which are setups made to the reader. The extractor records them during play; the lock commits them, with the critic's `commitmentsTested` report. Scoped like the ledger: the director sees those involving someone in the scene, an NPC only those it gave or received, and the novelizer, deepener, critic, and fixer those involving the chapter's cast plus any given in its play. The interviewer, outliner, card drafter, re-planner, and book reviewer never see them.
+- **Not changed:** the novelizer's "never invent plot" rule, and the director and NPC prompts. The deepener may state a secret plainly only where the chronicle shows one. Whether play should be prompted to produce explicit instructions is deferred.
+- **Eval:** `pnpm eval:prose` runs the pass on the test chapter's original draft, checks the guard metrics, and has a judge score the eight layers and the protected qualities for both the pass and the editor's revision (three strong-tier calls).
+
 ## Open questions
 
 From the spec:

@@ -15,6 +15,8 @@ export interface ServiceDeps {
   enqueue: Enqueue;
   /** Export storage (S3); exports are kept in Postgres when absent. */
   files?: FileStore;
+  /** Run the deepening pass after each chapter draft (default on). */
+  deepen?: boolean;
 }
 
 export interface ServiceContext extends ServiceDeps {

@@ -27,7 +27,11 @@ export interface TestKit {
   close: () => Promise<void>;
 }
 
-export async function createTestKit(): Promise<TestKit> {
+/**
+ * Services on an in-process database and a scripted model. The deepening pass is off unless a
+ * test asks for it, so scripted novelize jobs need only the novelizer's response.
+ */
+export async function createTestKit(options: { deepen?: boolean } = {}): Promise<TestKit> {
   const test = await createTestDb();
   const llm = new FakeLlm();
   const queued: Parameters<Enqueue>[0][] = [];
@@ -35,6 +39,7 @@ export async function createTestKit(): Promise<TestKit> {
     db: test.db,
     llm,
     enqueue: async (job) => void queued.push(job),
+    deepen: options.deepen ?? false,
   });
   return { ctx, llm, queued, close: test.close };
 }

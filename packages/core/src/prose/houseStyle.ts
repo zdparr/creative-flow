@@ -9,6 +9,16 @@ export function withHouseStyle(prompt: LoadedPrompt): LoadedPrompt {
   };
 }
 
+/** House style plus the mechanics of final book prose (italic thought, question marks). */
+export function withProseStyle(prompt: LoadedPrompt): LoadedPrompt {
+  const styled = withHouseStyle(prompt);
+  const mechanics = loadPrompt('prose-mechanics');
+  return {
+    version: `${styled.version}+${mechanics.version}`,
+    system: `${styled.system}\n\n${mechanics.system}`,
+  };
+}
+
 // A dash is allowed only where cut-off speech ends: right before the closing quotation mark,
 // or at the very end of a dialogue field that carries no quotation marks.
 const DASHES = /[—–]| - /g;

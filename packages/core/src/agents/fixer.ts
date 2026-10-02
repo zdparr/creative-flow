@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { type AgentContext, runStructuredAgent } from '../llm/runAgent.js';
-import { withHouseStyle } from '../prose/houseStyle.js';
+import { withProseStyle } from '../prose/houseStyle.js';
 import { proseProblems } from '../prose/rules.js';
 import { loadPrompt } from '../prompts/loader.js';
 import type { CohesionIssue } from '../schemas/cohesion.js';
@@ -110,7 +110,7 @@ export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<Fi
   const inRange = (n: number, count: number) => n >= 1 && n <= count;
   const out = await runStructuredAgent(ctx, {
     agent: 'fixer',
-    prompt: withHouseStyle(loadPrompt('fixer')),
+    prompt: withProseStyle(loadPrompt('fixer')),
     tier: 'strong',
     messages: [{ role: 'user', content }],
     schema: fixOutputSchema,

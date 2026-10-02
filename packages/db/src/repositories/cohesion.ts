@@ -2,13 +2,16 @@ import type {
   CohesionIssue,
   DriftDetails,
   FactCorrection,
+  CommitmentStatus,
   PlantedPromise,
+  StoredCommitmentTest,
   Waiver,
 } from '@storyforge/core';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import {
   cohesionReports,
+  commitments,
   driftEvents,
   knowledgeEntries,
   ledgerFacts,
@@ -20,6 +23,7 @@ export type CohesionReport = typeof cohesionReports.$inferSelect;
 export type LedgerFact = typeof ledgerFacts.$inferSelect;
 export type KnowledgeEntry = typeof knowledgeEntries.$inferSelect;
 export type PromiseRow = typeof promises.$inferSelect;
+export type CommitmentRow = typeof commitments.$inferSelect;
 export type DriftEvent = typeof driftEvents.$inferSelect;
 
 /** Payoff windows are int4range; Postgres stores "[3,5]" as "[3,6)". */
@@ -48,6 +52,7 @@ export function createCohesionRepo(db: Db) {
       plantedPromises: PlantedPromise[];
       checkpointsMet: { character: string; chapter: number }[];
       factCorrections?: FactCorrection[];
+      commitmentsTested?: StoredCommitmentTest[];
       jobId: string | null;
     }): Promise<CohesionReport> {
       const [row] = await db
@@ -115,6 +120,46 @@ export function createLedgerRepo(db: Db) {
     /** Append-only: a fact is never deleted, only superseded by a later one. */
     async supersede(id: string, byId: string): Promise<void> {
       await db.update(ledgerFacts).set({ supersededBy: byId }).where(eq(ledgerFacts.id, id));
+    },
+  };
+}
+
+export function createCommitmentRepo(db: Db) {
+  return {
+    list(projectId: string): Promise<CommitmentRow[]> {
+      return db
+        .select()
+        .from(commitments)
+        .where(eq(commitments.projectId, projectId))
+        .orderBy(asc(commitments.createdAt));
+    },
+
+    async add(values: {
+      projectId: string;
+      chapterId: string;
+      kind: string;
+      giver: string;
+      recipients: string[];
+      content: string;
+      scope: string;
+      words: string;
+      entities: string[];
+      status?: CommitmentStatus;
+      testedChapters?: number[];
+    }): Promise<CommitmentRow> {
+      const [row] = await db.insert(commitments).values(values).returning();
+      return row!;
+    },
+
+    /** Records that a chapter tested a commitment, and its status after the test. */
+    async recordTest(id: string, chapter: number, status: CommitmentStatus): Promise<void> {
+      const [row] = await db.select().from(commitments).where(eq(commitments.id, id));
+      if (!row) return;
+      const tested = [...new Set([...row.testedChapters, chapter])].sort((a, b) => a - b);
+      await db
+        .update(commitments)
+        .set({ testedChapters: tested, status })
+        .where(eq(commitments.id, id));
     },
   };
 }

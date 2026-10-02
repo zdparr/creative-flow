@@ -208,6 +208,7 @@ export const sampleOpeningExtraction: ExtractorOutput = {
     },
   ],
   promises: [],
+  commitments: [],
   drift: [],
 };
 
@@ -240,6 +241,7 @@ export const sampleTurnExtraction: ExtractorOutput = {
       entities: ['Maren Tull'],
     },
   ],
+  commitments: [],
   drift: [],
 };
 
@@ -262,6 +264,7 @@ export const sampleMinorCharacterExtraction: ExtractorOutput = {
   ],
   facts: [],
   promises: [],
+  commitments: [],
   drift: [],
 };
 

@@ -187,3 +187,16 @@ export const STATUS_LABELS: Record<string, string> = {
   assembling: 'Assembling',
   complete: 'Complete',
 };
+
+/** Prose with its *italic* markers rendered as emphasis. */
+export function ProseText({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const m of text.matchAll(/\*([^*\n]+)\*/g)) {
+    if (m.index > at) parts.push(text.slice(at, m.index));
+    parts.push(<em key={m.index}>{m[1]}</em>);
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return <>{parts}</>;
+}

@@ -2,3 +2,6 @@ pnpm-lock.yaml
 dist/
 packages/db/drizzle/
 SPEC.md
+# These prompts show the asterisk italics the prose must use; Prettier would rewrite them.
+prompts/deepener.md
+prompts/prose-mechanics.md

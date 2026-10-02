@@ -1,4 +1,9 @@
-import { type CharacterCard, renderCard } from '../context/buildContext.js';
+import {
+  type CharacterCard,
+  type ContextCommitment,
+  renderCard,
+  renderCommitment,
+} from '../context/buildContext.js';
 import { type AgentContext, runStructuredAgent } from '../llm/runAgent.js';
 import { loadPrompt } from '../prompts/loader.js';
 import type { BibleContent } from '../schemas/bible.js';
@@ -22,6 +27,11 @@ export interface CriticInput {
   candidatePromises: string[];
   /** Facts recorded during play, not yet in the ledger; the lock commits them as the draft has them. */
   pendingFacts: { ref: string; kind: string; statement: string }[];
+  /**
+   * Secrets, instructions, promises, and warnings in force for this chapter's cast, with refs:
+   * those committed earlier and those given during this chapter's play.
+   */
+  commitments?: (ContextCommitment & { ref: string })[];
 }
 
 /** What the book has established, as prompt sections (everything but the draft itself). */
@@ -38,6 +48,7 @@ export function cohesionSections(input: CriticInput): string[] {
     `# Arc checkpoints due by this chapter\n${input.checkpointsDue.map((c) => `- ${c.character}, chapter ${c.chapter}: ${c.description}`).join('\n') || '(none)'}`,
     `# Setups noticed during play\n${input.candidatePromises.map((p) => `- ${p}`).join('\n') || '(none)'}`,
     `# Facts recorded during play (this chapter, not yet in the ledger)\n${input.pendingFacts.map((f) => `- ${f.ref} [${f.kind}] ${f.statement}`).join('\n') || '(none)'}`,
+    `# Secrets and instructions in force (between characters)\n${(input.commitments ?? []).map((c) => `- ${c.ref}: ${renderCommitment(c)}`).join('\n') || '(none)'}`,
   ];
 }
 
@@ -56,6 +67,7 @@ export async function runCohesionCritic(
   const promiseIds = new Set(input.openPromises.map((p) => p.id));
   const names = new Set(input.cards.map((c) => c.name.toLowerCase()));
   const factRefs = new Set(input.pendingFacts.map((f) => f.ref));
+  const commitmentRefs = new Set((input.commitments ?? []).map((c) => c.ref));
   return runStructuredAgent(ctx, {
     agent: 'critic',
     prompt: loadPrompt('critic'),
@@ -79,6 +91,9 @@ export async function runCohesionCritic(
       ...out.factCorrections
         .filter((f) => !factRefs.has(f.ref))
         .map((f) => `factCorrections: "${f.ref}" is not a fact recorded during play`),
+      ...out.commitmentsTested
+        .filter((c) => !commitmentRefs.has(c.ref))
+        .map((c) => `commitmentsTested: "${c.ref}" is not a commitment in force`),
       ...out.promisesPlanted
         .filter(
           (p) =>

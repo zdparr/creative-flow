@@ -55,6 +55,9 @@ export function validateOutline(chapters: OutlineChapter[], spine: Spine): strin
   chapters.forEach((c, i) => {
     if (c.number !== i + 1) problems.push(`Chapter at position ${i + 1} is numbered ${c.number}`);
     if (c.requiredBeats.length === 0) problems.push(`Chapter ${c.number} has no required beats`);
+    const pivotal = c.requiredBeats.filter((b) => b.pivotal).length;
+    if (pivotal > 3)
+      problems.push(`Chapter ${c.number} marks ${pivotal} pivotal beats; mark at most 3`);
     if (c.isAnchor !== (c.anchorType !== null)) {
       problems.push(`Chapter ${c.number}: isAnchor and anchorType disagree`);
     }

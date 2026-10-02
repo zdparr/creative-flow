@@ -136,6 +136,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
       promises: [
         { type: 'mystery', description: 'Who is writing the letters?', entities: ['Maren Tull'] },
       ],
+      commitments: [],
       drift: [],
     },
     prose: [
@@ -150,6 +151,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
       ],
       checkpointsMet: [],
       factCorrections: [],
+      commitmentsTested: [],
       summary: summary('Maren finds a letter to her dead sister, dated next spring.'),
     },
   },
@@ -171,6 +173,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
         },
       ],
       promises: [],
+      commitments: [],
       drift: [],
     },
     prose: [
@@ -194,6 +197,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
       promisesPlanted: [],
       checkpointsMet: [{ character: 'Tomas Reyne', chapter: 2 }],
       factCorrections: [],
+      commitmentsTested: [],
       summary: summary('Tomas delivers the order to close the light.'),
     },
   },
@@ -209,6 +213,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
       newCharacters: [],
       facts: [],
       promises: [],
+      commitments: [],
       drift: [],
     },
     prose: [
@@ -232,6 +237,7 @@ export const seedChapters: Record<1 | 2 | 3, SeedChapter> = {
       promisesPlanted: [],
       checkpointsMet: [],
       factCorrections: [],
+      commitmentsTested: [],
       summary: summary('Tomas files his report and the light is kept.'),
     },
   },

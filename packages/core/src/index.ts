@@ -1,5 +1,6 @@
 export * from './agents/cardDrafter.js';
 export * from './agents/critic.js';
+export * from './agents/deepener.js';
 export * from './agents/fixer.js';
 export * from './agents/interviewer.js';
 export * from './agents/novelizer.js';
@@ -23,6 +24,7 @@ export * from './llm/pricing.js';
 export * from './llm/runAgent.js';
 export * from './prompts/loader.js';
 export * from './prose/houseStyle.js';
+export * from './prose/retention.js';
 export * from './prose/rules.js';
 export * from './queues.js';
 export * from './schemas/bible.js';

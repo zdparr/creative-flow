@@ -39,6 +39,8 @@ Tests never call the live API: agents run against `FakeLlm` with recorded respon
 
 To check the cohesion critic itself against the seeded test book (three planted violations) with the live model, run `ANTHROPIC_API_KEY=... pnpm eval:cohesion`. It makes a few strong-tier calls.
 
+To check the deepening pass on the test chapter (`packages/core/fixtures/weakest-light/`), run `ANTHROPIC_API_KEY=... pnpm eval:prose`. It compares the pass with a human editor's revision of the same draft and makes three strong-tier calls.
+
 After changing `packages/db/src/schema.ts`, run `pnpm db:generate` and commit the new migration. CI fails if you forget.
 
 ## Deploy

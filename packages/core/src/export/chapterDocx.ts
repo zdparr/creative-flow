@@ -23,6 +23,19 @@ export function proseBlocks(prose: string): ({ kind: 'para'; text: string } | { 
     );
 }
 
+/** A paragraph split into plain and italic runs; prose marks italics with single asterisks. */
+export function emphasisRuns(text: string): { text: string; italic: boolean }[] {
+  const runs: { text: string; italic: boolean }[] = [];
+  let at = 0;
+  for (const m of text.matchAll(/\*([^*\n]+)\*/g)) {
+    if (m.index > at) runs.push({ text: text.slice(at, m.index), italic: false });
+    runs.push({ text: m[1]!, italic: true });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) runs.push({ text: text.slice(at), italic: false });
+  return runs;
+}
+
 /** A chapter's heading and prose as manuscript paragraphs. */
 export function chapterParagraphs(number: number, title: string, prose: string): Paragraph[] {
   const paragraphs: Paragraph[] = [
@@ -51,7 +64,9 @@ export function chapterParagraphs(number: number, title: string, prose: string):
     paragraphs.push(
       new Paragraph({
         indent: indent ? { firstLine: INCH / 2 } : undefined,
-        children: [new TextRun(block.text)],
+        children: emphasisRuns(block.text).map(
+          (r) => new TextRun({ text: r.text, italics: r.italic }),
+        ),
       }),
     );
     indent = true;

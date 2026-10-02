@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
-import { ErrorNote, Problems, TextField, Working, humanize } from '../components.js';
+import { ErrorNote, Problems, ProseText, TextField, Working, humanize } from '../components.js';
 import { navigate } from '../router.js';
 import type { ApprovedFix, CohesionIssue, FixProposal, ReviewView } from '../types.js';
 
@@ -564,7 +564,7 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
                   <span className="para-no" aria-hidden>
                     {i + 1}
                   </span>
-                  {p}
+                  <ProseText text={p} />
                 </p>
               ),
             )}

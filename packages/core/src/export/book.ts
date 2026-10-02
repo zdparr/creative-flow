@@ -1,7 +1,13 @@
 import { AlignmentType, Paragraph, TextRun } from 'docx';
 import JSZip from 'jszip';
 import PDFDocument from 'pdfkit';
-import { chapterParagraphs, manuscriptDocument, proseBlocks, titleSlug } from './chapterDocx.js';
+import {
+  chapterParagraphs,
+  emphasisRuns,
+  manuscriptDocument,
+  proseBlocks,
+  titleSlug,
+} from './chapterDocx.js';
 
 // Whole-book exports. Every format holds the locked chapters' final prose only.
 
@@ -115,7 +121,10 @@ ${body}
           first = true;
           return '<p class="break">#</p>';
         }
-        const html = `<p${first ? ' class="first"' : ''}>${xml(b.text)}</p>`;
+        const text = emphasisRuns(b.text)
+          .map((r) => (r.italic ? `<em>${xml(r.text)}</em>` : xml(r.text)))
+          .join('');
+        const html = `<p${first ? ' class="first"' : ''}>${text}</p>`;
         first = false;
         return html;
       })
@@ -205,7 +214,17 @@ export function bookToPdf(book: BookExport): Promise<Buffer> {
           first = true;
           continue;
         }
-        doc.text(block.text, { width, align: 'justify', indent: first ? 0 : 24, lineGap: 4 });
+        const runs = emphasisRuns(block.text);
+        runs.forEach((r, i) => {
+          doc.font(r.italic ? 'Times-Italic' : 'Times-Roman').text(r.text, {
+            width,
+            align: 'justify',
+            indent: first ? 0 : 24,
+            lineGap: 4,
+            continued: i < runs.length - 1,
+          });
+        });
+        doc.font('Times-Roman');
         first = false;
       }
     }

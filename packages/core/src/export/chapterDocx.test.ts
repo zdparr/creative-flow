@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { chapterFileName, chapterToDocx, proseBlocks } from './chapterDocx.js';
+import { chapterFileName, chapterToDocx, emphasisRuns, proseBlocks } from './chapterDocx.js';
+import { bookToEpub } from './book.js';
 
 const prose = [
   'The tide came in the way it always had, without asking.',
@@ -45,5 +46,40 @@ describe('chapterFileName', () => {
   it('slugs the title and pads the chapter number', () => {
     expect(chapterFileName('The Tide Letters!', 3)).toBe('the-tide-letters-chapter-03.docx');
     expect(chapterFileName('???', 12)).toBe('book-chapter-12.docx');
+  });
+});
+
+describe('italics', () => {
+  const text = 'He wrote *inert* and thought, *Not now.* Then he went on.';
+
+  it('splits a paragraph into plain and italic runs', () => {
+    expect(emphasisRuns(text)).toEqual([
+      { text: 'He wrote ', italic: false },
+      { text: 'inert', italic: true },
+      { text: ' and thought, ', italic: false },
+      { text: 'Not now.', italic: true },
+      { text: ' Then he went on.', italic: false },
+    ]);
+    expect(emphasisRuns('No markup here.')).toEqual([{ text: 'No markup here.', italic: false }]);
+  });
+
+  it('renders italics in Word and EPUB without the asterisks', async () => {
+    const docx = await JSZip.loadAsync(
+      await chapterToDocx({ bookTitle: 'B', chapterNumber: 1, chapterTitle: 'T', prose: text }),
+    );
+    const xml = await docx.file('word/document.xml')!.async('string');
+    expect(xml).toMatch(/<w:i\/>[\s\S]*?inert/);
+    expect(xml).not.toContain('*');
+
+    const epub = await JSZip.loadAsync(
+      await bookToEpub({
+        id: 'b',
+        title: 'B',
+        author: '',
+        chapters: [{ number: 1, title: 'T', prose: text }],
+      }),
+    );
+    const page = await epub.file('OEBPS/chapter-01.xhtml')!.async('string');
+    expect(page).toContain('He wrote <em>inert</em> and thought, <em>Not now.</em>');
   });
 });

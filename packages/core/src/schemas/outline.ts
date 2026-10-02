@@ -5,6 +5,12 @@ import { PROMISE_TYPES } from '../domain/status.js';
 export const requiredBeatSchema = z.object({
   id: z.string().describe('Stable id unique across the outline, e.g. "c3-b2"'),
   description: z.string(),
+  pivotal: z
+    .boolean()
+    .optional()
+    .describe(
+      'True for the 1-3 beats where the chapter turns (a failure, discovery, confrontation, or decision); the prose slows down there',
+    ),
 });
 
 export const arcMoveSchema = z.object({

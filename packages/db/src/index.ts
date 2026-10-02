@@ -8,6 +8,7 @@ import { createOutlineRepo } from './repositories/outlines.js';
 import { createCharacterRepo } from './repositories/characters.js';
 import {
   createCohesionRepo,
+  createCommitmentRepo,
   createDriftRepo,
   createKnowledgeRepo,
   createLedgerRepo,
@@ -49,6 +50,7 @@ export function createRepos(db: Db) {
     ledger: createLedgerRepo(db),
     knowledge: createKnowledgeRepo(db),
     promises: createPromiseRepo(db),
+    commitments: createCommitmentRepo(db),
     snapshots: createSnapshotRepo(db),
     drift: createDriftRepo(db),
     replan: createReplanRepo(db),

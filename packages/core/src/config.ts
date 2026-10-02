@@ -12,6 +12,11 @@ const baseEnv = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  // The deepening pass after each chapter draft: one more strong-tier call per draft.
+  DEEPEN_PASS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   // Export storage. Without a bucket, exported files are stored in Postgres.
   S3_BUCKET: z.string().optional(),
   AWS_REGION: z.string().optional(),

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CHARACTER_TIERS, PROMISE_TYPES } from '../domain/status.js';
+import { CHARACTER_TIERS, COMMITMENT_KINDS, PROMISE_TYPES } from '../domain/status.js';
 
 export const LEDGER_FACT_KINDS = [
   'event',
@@ -35,6 +35,26 @@ export const driftNoticeSchema = z.object({
 });
 export type DriftNotice = z.infer<typeof driftNoticeSchema>;
 
+export const commitmentSchema = z.object({
+  kind: z
+    .enum(COMMITMENT_KINDS)
+    .describe(
+      'secret: something to keep hidden; instruction: an order to do or not do something; promise: a pledge one character makes another; warning: a caution about a danger',
+    ),
+  from: z.string().describe('Who gave it, by name'),
+  to: z.array(z.string()).describe('Who received it, by name'),
+  content: z.string().describe('What must be kept, done, or avoided, in one plain sentence'),
+  scope: z
+    .string()
+    .describe(
+      'Who it covers or excludes, as stated (e.g. "no one: not another apprentice, not another mage"); empty if unstated',
+    ),
+  words: z
+    .string()
+    .describe('The line that gave it, word for word as spoken; empty if it was not said aloud'),
+});
+export type Commitment = z.infer<typeof commitmentSchema>;
+
 export const extractorOutputSchema = z.object({
   summary: z.string().describe('One or two sentences: what happened in this exchange'),
   characters: z.array(z.string()).describe('Names of characters present or acting'),
@@ -68,6 +88,12 @@ export const extractorOutputSchema = z.object({
       }),
     )
     .describe('New setups the reader will expect to pay off'),
+  commitments: z
+    .array(commitmentSchema)
+    .default([])
+    .describe(
+      'Secrets, instructions, promises, and warnings one character gives another in this exchange; usually empty',
+    ),
   drift: z
     .array(driftNoticeSchema)
     .describe('Divergences from the chapter plan, facts, or cards; usually empty'),
@@ -83,6 +109,8 @@ export interface ChronicleExtraction {
   facts: ExtractorOutput['facts'];
   promises: ExtractorOutput['promises'];
   newCharacters: ExtractorOutput['newCharacters'];
+  /** Absent on events recorded before the commitments ledger. */
+  commitments?: Commitment[];
 }
 
 export const npcVoiceOutputSchema = z.object({

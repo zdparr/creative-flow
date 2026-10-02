@@ -21,7 +21,14 @@ import { cardsForChapter, ensureCast, listCharacters, registerNewCharacter } fro
 import type { ServiceContext } from './context.js';
 import { requestNovelize } from './drafting.js';
 import { recordDrift } from './drift.js';
-import { knowledgeItems, ledgerFacts, promisesForPlay, toPlan } from './state.js';
+import {
+  commitmentsInForce,
+  knowledgeItems,
+  ledgerFacts,
+  pendingCommitments,
+  promisesForPlay,
+  toPlan,
+} from './state.js';
 
 /** Receives a turn as it happens; the API forwards these as server-sent events. */
 export interface PlaySink {
@@ -109,11 +116,18 @@ async function runTurn(
   const scene = await sceneCharacters(ctx, data);
   const cards = await cardsForChapter(ctx, data.project.id, data.characters, data.chapter.number);
   const cardOf = (id: string) => cards.find((c) => c.id === id)!;
-  const [facts, knowledge, drift] = await Promise.all([
+  const [facts, knowledge, drift, earlierCommitments, chronicle] = await Promise.all([
     ledgerFacts(ctx, data.project.id),
     knowledgeItems(ctx, data.project.id),
     ctx.repos.drift.listForChapter(data.chapter.id),
+    commitmentsInForce(ctx, data.project.id, data.chapter.number),
+    ctx.repos.play.listChronicle(data.chapter.id),
   ]);
+  // Secrets and instructions in force: earlier chapters' and those given so far in this one.
+  const commitments = [
+    ...earlierCommitments,
+    ...pendingCommitments(ctx, data.chapter.number, chronicle, data.characters),
+  ];
   // Drift the author chose to steer back: the director works the plan back in.
   const steered = drift.filter((d) => d.resolution === 'steer');
   // Summaries are written at lock (Phase 5); they are the only form of old chapters play sees.
@@ -135,6 +149,7 @@ async function runTurn(
       lockedSummaries,
       facts,
       promises: await promisesForPlay(ctx, data.project.id, data.chapter.number),
+      commitments,
       steer: steered.map((d) => d.description),
     },
     DIRECTOR_BUDGET_TOKENS,
@@ -166,6 +181,7 @@ async function runTurn(
           otherCharactersInScene: others.map((o) => ({ name: o.name, relationship: '' })),
           recentTurns: data.turns.map(toContextTurn),
           situation,
+          commitments,
         }),
       );
       npcTurns.push(
@@ -242,6 +258,7 @@ async function runTurn(
         facts: found.facts,
         promises: found.promises,
         newCharacters: found.newCharacters,
+        commitments: found.commitments,
       },
     });
     const hit = new Set([

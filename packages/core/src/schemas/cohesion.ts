@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PROMISE_TYPES } from '../domain/status.js';
+import { COMMITMENT_OUTCOMES, type CommitmentOutcome, PROMISE_TYPES } from '../domain/status.js';
 
 export const ISSUE_SEVERITIES = ['blocker', 'warning', 'note'] as const;
 export type IssueSeverity = (typeof ISSUE_SEVERITIES)[number];
@@ -60,10 +60,33 @@ export const criticOutputSchema = z.object({
     .describe(
       'Facts recorded during play that this draft changes or no longer contains; omit facts the draft keeps as they are',
     ),
+  commitmentsTested: z
+    .array(
+      z.object({
+        ref: z.string().describe('The commitment ref, like "C2"'),
+        outcome: z
+          .enum(COMMITMENT_OUTCOMES)
+          .describe(
+            'kept: pressed but held; partly_revealed: some of it given up; broken: given up or defied; released: the giver lifted it',
+          ),
+      }),
+    )
+    .default([])
+    .describe(
+      'Commitments in force that this draft puts under pressure (a character is pressed on, tempted to break, or acts on one); omit the rest',
+    ),
   summary: z
     .string()
     .describe('A 300-500 word summary of the chapter as written, for later chapters to read'),
 });
+export type CommitmentTest = CriticOutput['commitmentsTested'][number];
+
+/** A commitment test as stored on a report: the registry id, or the content of one given this chapter. */
+export interface StoredCommitmentTest {
+  commitmentId: string | null;
+  content: string;
+  outcome: CommitmentOutcome;
+}
 export type CriticOutput = z.infer<typeof criticOutputSchema>;
 export type PlantedPromise = CriticOutput['promisesPlanted'][number];
 
