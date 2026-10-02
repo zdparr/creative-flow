@@ -27,28 +27,50 @@ function replaceParagraph(prose: string, n: number, text: string): string {
 const shorten = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 
+/** A short label for an issue: severity, category, and where. */
+const issueLabel = (issue: CohesionIssue) =>
+  `${humanize(issue.severity)} · ${humanize(issue.category)}${issue.paragraph > 0 ? ` ¶${issue.paragraph}` : ''}`;
+
 /** A revision note for the novelizer describing one issue. */
 const issueNote = (issue: CohesionIssue) =>
   `${issue.paragraph > 0 ? `Paragraph ${issue.paragraph}: ` : ''}${issue.description} Fix: ${issue.suggestedFix}`;
 
-/** The AI's proposed rewrite of one issue, shown beside the original for the author to approve. */
+/** The AI's proposed rewrite of one or more issues, shown beside the original for approval. */
 function FixPanel({
   proposal,
   busy,
+  describeIssue,
   onApprove,
   onDiscard,
 }: {
   proposal: FixProposal;
   busy: boolean;
+  /** A short label for an issue, for listing the ones the AI could not fix. */
+  describeIssue: (issueId: string) => string;
   onApprove: (fix: ApprovedFix) => void;
   onDiscard: () => void;
 }) {
   const [texts, setTexts] = useState(proposal.edits.map((e) => e.after));
   const [beat, setBeat] = useState(proposal.move?.beat ?? '');
   const { move } = proposal;
+  const key = proposal.issueIds.join('-');
   return (
     <div className="fix stack">
       <p className="small-print">{proposal.explanation}</p>
+      {proposal.skipped.length > 0 && (
+        <div className="stack">
+          <span className="muted small-print">
+            Not fixed by this revision (waive or handle these):
+          </span>
+          <ul className="small-print">
+            {proposal.skipped.map((sk) => (
+              <li key={sk.issueId}>
+                {describeIssue(sk.issueId)}: {sk.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {move && (
         <div className="stack">
           <span className="muted small-print">
@@ -71,11 +93,11 @@ function FixPanel({
               </ul>
             </>
           )}
-          <label className="muted small-print" htmlFor={`fix-${proposal.issueId}-beat`}>
+          <label className="muted small-print" htmlFor={`fix-${key}-beat`}>
             New required beat for chapter {move.toChapter} (you can edit it):
           </label>
           <textarea
-            id={`fix-${proposal.issueId}-beat`}
+            id={`fix-${key}-beat`}
             rows={Math.max(3, Math.ceil(beat.length / 45))}
             value={beat}
             onChange={(ev) => setBeat(ev.target.value)}
@@ -86,11 +108,11 @@ function FixPanel({
         <div key={e.paragraph} className="stack">
           <span className="muted small-print">¶{e.paragraph} now reads:</span>
           <del className="small-print">{e.before}</del>
-          <label className="muted small-print" htmlFor={`fix-${proposal.issueId}-${e.paragraph}`}>
+          <label className="muted small-print" htmlFor={`fix-${key}-${e.paragraph}`}>
             Proposed (you can edit it before approving):
           </label>
           <textarea
-            id={`fix-${proposal.issueId}-${e.paragraph}`}
+            id={`fix-${key}-${e.paragraph}`}
             rows={Math.max(4, Math.ceil(texts[i]!.length / 45))}
             value={texts[i]}
             onChange={(ev) => setTexts(texts.map((t, j) => (j === i ? ev.target.value : t)))}
@@ -99,7 +121,12 @@ function FixPanel({
       ))}
       <div className="toolbar">
         <button
-          disabled={busy || texts.some((t) => !t.trim()) || (!!move && !beat.trim())}
+          disabled={
+            busy ||
+            (proposal.edits.length === 0 && !move) ||
+            texts.some((t) => !t.trim()) ||
+            (!!move && !beat.trim())
+          }
           onClick={() =>
             onApprove({
               edits: proposal.edits.map((e, i) => ({ paragraph: e.paragraph, text: texts[i]! })),
@@ -111,12 +138,83 @@ function FixPanel({
             })
           }
         >
-          {move ? `Approve and move to chapter ${move.toChapter}` : 'Approve fix'}
+          {move
+            ? `Approve and move to chapter ${move.toChapter}`
+            : proposal.issueIds.length > 1
+              ? `Approve fixes for ${proposal.issueIds.length - proposal.skipped.length} issues`
+              : 'Approve fix'}
         </button>
         <button className="quiet" disabled={busy} onClick={onDiscard}>
           Discard
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Fixes every open blocker and warning in one AI revision: one approval, one new version, and
+ * one re-check, instead of a fix-and-check round per issue.
+ */
+function FixAll({
+  issues,
+  onPropose,
+  onApply,
+}: {
+  issues: CohesionIssue[];
+  onPropose: (issueIds: string[]) => Promise<FixProposal | null>;
+  onApply: (proposal: FixProposal, fix: ApprovedFix) => Promise<void>;
+}) {
+  const [proposal, setProposal] = useState<FixProposal | null>(null);
+  const [fixing, setFixing] = useState(false);
+  const byId = new Map(issues.map((i) => [i.id, i]));
+
+  async function propose() {
+    setFixing(true);
+    try {
+      setProposal(await onPropose(issues.map((i) => i.id)));
+    } finally {
+      setFixing(false);
+    }
+  }
+
+  async function apply(fix: ApprovedFix) {
+    if (!proposal) return;
+    setFixing(true);
+    try {
+      await onApply(proposal, fix);
+      setProposal(null);
+    } finally {
+      setFixing(false);
+    }
+  }
+
+  return (
+    <div className="card stack">
+      {proposal ? (
+        <FixPanel
+          proposal={proposal}
+          busy={fixing}
+          describeIssue={(id) => (byId.has(id) ? issueLabel(byId.get(id)!) : 'An issue')}
+          onApprove={apply}
+          onDiscard={() => setProposal(null)}
+        />
+      ) : (
+        <>
+          <p className="small-print">
+            Fix all {issues.length} open blockers and warnings in one revision, then check once.
+          </p>
+          <div>
+            <button
+              disabled={fixing}
+              onClick={propose}
+              title="Have the AI rewrite the text to fix every open blocker and warning together"
+            >
+              {fixing ? `Writing fixes for ${issues.length} issues…` : `Fix all ${issues.length}`}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -215,6 +313,7 @@ function IssueCard({
         <FixPanel
           proposal={proposal}
           busy={fixing}
+          describeIssue={() => issueLabel(issue)}
           onApprove={apply}
           onDiscard={() => setProposal(null)}
         />
@@ -335,6 +434,8 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.paragraph - b.paragraph,
   );
   const waiverOf = (id: string) => report?.waived.find((w) => w.issueId === id);
+  // What "fix all" covers: blockers and warnings not waived. Notes are suggestions.
+  const openIssues = issues.filter((i) => i.severity !== 'note' && !waiverOf(i.id));
   const paragraphs = older
     ? older.prose.split(/\n\s*\n/).filter((p) => p.trim() && !/^\s*(#|\*\s*\*\s*\*)\s*$/.test(p))
     : view.paragraphs;
@@ -578,6 +679,32 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
             </div>
           )}
           {report && issues.length === 0 && <p>No issues found.</p>}
+          {reviewable && !!draft && report?.current && !working && openIssues.length > 1 && (
+            <FixAll
+              key={`${report.id}:${openIssues.map((i) => i.id).join(',')}`}
+              issues={openIssues}
+              onPropose={async (issueIds) => {
+                setError(null);
+                try {
+                  return await api<FixProposal>('POST', `/chapters/${chapterId}/fixes`, {
+                    issueIds,
+                  });
+                } catch (err) {
+                  setError(errorText(err));
+                  return null;
+                }
+              }}
+              onApply={(proposal, fix) =>
+                run(() =>
+                  api('POST', `/chapters/${chapterId}/fixes/apply`, {
+                    issueIds: proposal.issueIds,
+                    draftVersion: proposal.draftVersion,
+                    ...fix,
+                  }),
+                )
+              }
+            />
+          )}
           <ul className="issues">
             {issues.map((issue) => (
               <IssueCard

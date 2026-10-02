@@ -30,6 +30,15 @@ export const fixOutputSchema = z.object({
     })
     .nullable()
     .describe('Only when the fix is to move content to the next chapter; otherwise null'),
+  skipped: z
+    .array(
+      z.object({
+        problem: z.number().int().describe('The number of the problem left unfixed'),
+        reason: z.string().describe('Why rewriting cannot fix it, in one sentence'),
+      }),
+    )
+    .default([])
+    .describe('Problems a rewrite of this draft cannot fix; empty when every problem is fixed'),
   explanation: z.string().describe('One or two sentences for the author: what changed and why'),
 });
 export type FixOutput = z.infer<typeof fixOutputSchema>;
@@ -43,12 +52,13 @@ export interface FixerScene {
 export interface FixerInput {
   /** The same context the cohesion critic checks against, including the draft. */
   context: CriticInput;
-  issue: CohesionIssue;
+  /** The issues to fix together in one revision; at least one. */
+  issues: CohesionIssue[];
   /** The report's other open issues, which the fix must not make worse. */
   otherIssues: CohesionIssue[];
   /** The scenes played for this chapter, in order. */
   scenes: FixerScene[];
-  /** The next chapter's plan when content can move there; null when it cannot. */
+  /** The next chapter's plan when content can move there; null when it cannot. Ignored for several issues. */
   nextChapter: OutlineChapter | null;
 }
 
@@ -64,22 +74,36 @@ function nextChapterSection(next: OutlineChapter | null): string {
 
 const unique = (ns: number[]) => [...new Set(ns)].sort((a, b) => a - b);
 
+const problem = (i: CohesionIssue) =>
+  `Severity: ${i.severity}\nCategory: ${i.category}\nWhere: ${i.paragraph > 0 ? `paragraph ${i.paragraph}` : 'the whole chapter'}\nWhat is wrong: ${i.description}\nEvidence: ${i.evidence}\nSuggested fix: ${i.suggestedFix}`;
+
+function problemsSection(issues: CohesionIssue[]): string {
+  if (issues.length === 1) return `# The problem to fix\n${problem(issues[0]!)}`;
+  return `# The problems to fix (all of them, in one revision)\n${issues.map((i, n) => `## Problem ${n + 1}\n${problem(i)}`).join('\n\n')}`;
+}
+
 /**
- * Proposes replacement paragraphs that fix one cohesion issue, for the author to approve. It
- * revises against everything the critic checks, so a fix does not create a new problem. When
- * the fix is to move content to the next chapter, it names what to cut and the beat to add.
+ * Proposes replacement paragraphs that fix one or several cohesion issues in one revision, for
+ * the author to approve. It revises against everything the critic checks, so a fix does not
+ * create a new problem. For a single issue whose fix is to move content to the next chapter, it
+ * names what to cut and the beat to add.
  */
 export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<FixOutput> {
-  const { issue, context, scenes, nextChapter } = input;
+  const { issues, context, scenes } = input;
+  if (issues.length === 0) throw new Error('runFixer needs at least one issue');
+  // Moving content is a structural change the author decides one issue at a time.
+  const nextChapter = issues.length === 1 ? input.nextChapter : null;
   const { paragraphs } = context;
   const content = [
     ...cohesionSections(context),
     `# Scenes played in this chapter (numbered)\n${scenes.map((s, i) => `[${i + 1}] ${s.summary}${s.beats.length ? ` (hits beats: ${s.beats.join(', ')})` : ''}`).join('\n') || '(none)'}`,
     nextChapterSection(nextChapter),
     numberedDraft(paragraphs),
-    `# The problem to fix\nSeverity: ${issue.severity}\nCategory: ${issue.category}\nWhere: ${issue.paragraph > 0 ? `paragraph ${issue.paragraph}` : 'the whole chapter'}\nWhat is wrong: ${issue.description}\nEvidence: ${issue.evidence}\nSuggested fix: ${issue.suggestedFix}`,
+    problemsSection(issues),
     `# Other open issues (do not make these worse or add new ones)\n${input.otherIssues.map(describe).join('\n') || '(none)'}`,
-    '# Your task\nRevise only the paragraphs needed to fix the problem, or move content to the next chapter if that is the fix. Before answering, check your revision against every card, knowledge entry, ledger fact, promise, and required beat above.',
+    issues.length === 1
+      ? '# Your task\nRevise only the paragraphs needed to fix the problem, or move content to the next chapter if that is the fix. Before answering, check your revision against every card, knowledge entry, ledger fact, promise, and required beat above.'
+      : '# Your task\nRevise only the paragraphs needed to fix every problem above, in one consistent revision: where two problems touch the same paragraph, give one replacement that fixes both. List in `skipped` any problem a rewrite cannot fix. Before answering, check your revision against every card, knowledge entry, ledger fact, promise, and required beat above.',
   ].join('\n\n');
 
   const banned = context.bible.styleGuide.bannedPhrases;
@@ -94,9 +118,12 @@ export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<Fi
     check: (o) => {
       const moved = new Set(o.move?.paragraphs ?? []);
       return [
-        ...(o.edits.length === 0 && !o.move
+        ...(o.edits.length === 0 && !o.move && o.skipped.length < issues.length
           ? ['edits: change at least one paragraph, or move content']
           : []),
+        ...o.skipped
+          .filter((sk) => sk.problem < 1 || sk.problem > issues.length)
+          .map((sk) => `skipped: problem ${sk.problem} does not exist (1-${issues.length})`),
         ...o.edits
           .filter((e) => !inRange(e.paragraph, paragraphs.length))
           .map((e) => `edits: paragraph ${e.paragraph} does not exist (1-${paragraphs.length})`),
@@ -136,6 +163,9 @@ export async function runFixer(ctx: AgentContext, input: FixerInput): Promise<Fi
   );
   return {
     explanation: out.explanation,
+    skipped: [...new Map(out.skipped.map((sk) => [sk.problem, sk])).values()].sort(
+      (a, b) => a.problem - b.problem,
+    ),
     edits: [...byParagraph]
       .sort(([a], [b]) => a - b)
       .map(([paragraph, text]) => ({ paragraph, text })),

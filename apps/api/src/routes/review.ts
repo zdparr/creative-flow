@@ -1,12 +1,15 @@
 import { NotFoundError } from '@storyforge/core';
 import {
   applyFix,
+  applyFixes,
   editDraft,
   getDraftVersion,
   getPlayState,
   getReview,
   lockChapter,
+  openIssueIds,
   proposeFix,
+  proposeFixes,
   recheckDraft,
   regenerateDraft,
   resolveDrift,
@@ -34,6 +37,9 @@ const applyFixBody = z.object({
     .nullable()
     .optional(),
 });
+// Omitted issue ids mean every open blocker and warning on the current report.
+const fixesBody = z.object({ issueIds: z.array(z.string()).optional() });
+const applyFixesBody = applyFixBody.extend({ issueIds: z.array(z.string()).min(1) });
 
 type ChapterParams = { Params: { id: string } };
 
@@ -103,6 +109,20 @@ export const reviewRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
       return getReview(services, chapter.id);
     },
   );
+
+  app.post<ChapterParams>('/chapters/:id/fixes', async (req) => {
+    const chapter = await loadChapter(req);
+    const ids =
+      fixesBody.parse(req.body ?? {}).issueIds ?? (await openIssueIds(services, chapter.id));
+    return proposeFixes(services, chapter.id, ids);
+  });
+
+  app.post<ChapterParams>('/chapters/:id/fixes/apply', async (req) => {
+    const chapter = await loadChapter(req);
+    const { issueIds, ...approved } = applyFixesBody.parse(req.body);
+    await applyFixes(services, chapter.id, issueIds, approved);
+    return getReview(services, chapter.id);
+  });
 
   app.post<ChapterParams>('/chapters/:id/lock', async (req) => {
     const chapter = await loadChapter(req);

@@ -5,10 +5,13 @@ import { updatePromise } from './book.js';
 import { getCharacter } from './characters.js';
 import {
   applyFix,
+  applyFixes,
   editDraft,
   getReview,
   lockChapter,
+  openIssueIds,
   proposeFix,
+  proposeFixes,
   regenerateDraft,
   waiveIssue,
 } from './drafting.js';
@@ -276,6 +279,59 @@ describe('Phase 5: novelize, cohesion, lock', () => {
       { issueId: 'r1', reason: 'Extending the promise later' },
     ]);
     expect(review.canLock).toBe(true);
+  });
+
+  it('fixes every open issue in one revision and one re-check', async () => {
+    const { ctx, llm } = kit;
+    const { chapters } = await seededProject(ctx);
+    await draftSeedChapter(kit, chapters[0]!.id, 1);
+    await lockChapter(ctx, chapters[0]!.id);
+    await runQueued(kit, 'outline.replan', sampleReplan);
+    const c2 = chapters[1]!.id;
+    await draftSeedChapter(kit, c2, 2);
+
+    // "Fix all" covers both open blockers: the overdue promise and the knowledge slip.
+    const ids = await openIssueIds(ctx, c2);
+    expect(ids).toEqual(['r1', 'c1']);
+    const fixed =
+      '"The light closes at the end of the month," he said, and set the order on the table.';
+    llm.push({
+      edits: [{ paragraph: 2, text: fixed }],
+      move: null,
+      skipped: [{ problem: 1, reason: 'The letters are answered in a later chapter.' }],
+      explanation: 'Tomas no longer mentions the letters.',
+    });
+    const proposal = await proposeFixes(ctx, c2, ids);
+    expect(proposal).toMatchObject({
+      issueIds: ['r1', 'c1'],
+      draftVersion: 1,
+      edits: [{ paragraph: 2, after: fixed }],
+      skipped: [{ issueId: 'r1', reason: 'The letters are answered in a later chapter.' }],
+      move: null,
+    });
+    const prompt = llm.requests.at(-1)!.messages[0]!.content as string;
+    expect(prompt).toContain('# The problems to fix (all of them, in one revision)');
+    expect(prompt).toContain('## Problem 2');
+    expect(prompt).toContain('Tomas mentions the letters to Isla');
+    // Moving content is only offered one issue at a time.
+    expect(prompt).toContain('Content cannot move');
+    await expect(
+      applyFixes(ctx, c2, ids, {
+        draftVersion: 1,
+        edits: [],
+        move: { paragraphs: [2], sceneIds: [], beat: 'x' },
+      }),
+    ).rejects.toBeInstanceOf(GateError);
+
+    // One approval: one new version and one queued check.
+    await applyFixes(ctx, c2, ids, { draftVersion: 1, edits: [{ paragraph: 2, text: fixed }] });
+    const review = await getReview(ctx, c2);
+    expect(review.draft).toMatchObject({
+      version: 2,
+      notes: 'Fixed 2 issues (promise, knowledge)',
+    });
+    expect(review.paragraphs[1]).toBe(fixed);
+    expect(kit.queued.filter((j) => j.type === 'chapter.cohesion')).toHaveLength(1);
   });
 
   it('moves paragraphs and their scenes to the next chapter as a new required beat', async () => {

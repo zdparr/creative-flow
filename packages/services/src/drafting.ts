@@ -434,10 +434,13 @@ export async function waiveIssue(
 // ---------- AI fixes ----------
 
 export interface FixProposal {
-  issueId: string;
+  /** The issues the fix addresses: one, or several fixed together. */
+  issueIds: string[];
   draftVersion: number;
   explanation: string;
   edits: { paragraph: number; before: string; after: string }[];
+  /** Issues the fixer could not fix by rewriting, with its reason. */
+  skipped: { issueId: string; reason: string }[];
   /** Content the fix moves to the next chapter, which gains a required beat for it. */
   move: {
     toChapter: number;
@@ -447,8 +450,8 @@ export interface FixProposal {
   } | null;
 }
 
-/** The current draft and its report, which must match for an issue to be fixed. */
-async function currentIssue(ctx: ServiceContext, chapterId: string, issueId: string) {
+/** The current draft and its report, which must match for issues to be fixed. */
+async function currentIssues(ctx: ServiceContext, chapterId: string, issueIds: string[]) {
   const chapter = await ctx.repos.chapters.get(chapterId);
   if (!chapter) throw new NotFoundError('Chapter');
   assertReviewable(chapter);
@@ -459,9 +462,23 @@ async function currentIssue(ctx: ServiceContext, chapterId: string, issueId: str
   if (!draft || !report || report.draftId !== draft.id) {
     throw new ConflictError('Check the current draft before fixing its issues');
   }
-  const issue = report.issues.find((i) => i.id === issueId);
-  if (!issue) throw new NotFoundError('Issue');
-  return { chapter, draft, issue, report };
+  const ids = [...new Set(issueIds)];
+  if (ids.length === 0) throw new GateError('Choose the issues to fix');
+  const issues = ids.map((id) => {
+    const issue = report.issues.find((i) => i.id === id);
+    if (!issue) throw new NotFoundError('Issue');
+    return issue;
+  });
+  return { chapter, draft, issues, report };
+}
+
+/** Every issue on the current report that is not waived and not a note: what "fix all" fixes. */
+export async function openIssueIds(ctx: ServiceContext, chapterId: string): Promise<string[]> {
+  const report = await ctx.repos.cohesion.latestForChapter(chapterId);
+  const waived = new Set(report?.waived.map((w) => w.issueId));
+  return (report?.issues ?? [])
+    .filter((i) => i.severity !== 'note' && !waived.has(i.id))
+    .map((i) => i.id);
 }
 
 /**
@@ -484,28 +501,38 @@ const canonScenes = async (ctx: ServiceContext, chapterId: string) =>
   (await ctx.repos.play.listChronicle(chapterId)).filter((e) => e.isCanon);
 
 /** Asks the fixer for revised paragraphs that resolve one issue. Nothing changes until approved. */
-export async function proposeFix(
+export function proposeFix(ctx: ServiceContext, chapterId: string, issueId: string) {
+  return proposeFixes(ctx, chapterId, [issueId]);
+}
+
+/**
+ * Asks the fixer for one revision that resolves several issues at once, so the author approves
+ * once and the chapter is checked once. Moving content to the next chapter is only offered for
+ * a single issue. Nothing changes until approved.
+ */
+export async function proposeFixes(
   ctx: ServiceContext,
   chapterId: string,
-  issueId: string,
+  issueIds: string[],
 ): Promise<FixProposal> {
-  const { chapter, draft, issue, report } = await currentIssue(ctx, chapterId, issueId);
+  const { chapter, draft, issues, report } = await currentIssues(ctx, chapterId, issueIds);
+  const fixing = new Set(issues.map((i) => i.id));
   const [{ input: context }, scenes, next] = await Promise.all([
     chapterBasics(ctx, chapterId).then((basics) => cohesionContext(ctx, basics, draft.prose)),
     canonScenes(ctx, chapterId),
-    nextChapterFor(ctx, chapter),
+    issues.length === 1 ? nextChapterFor(ctx, chapter) : null,
   ]);
   const { paragraphs } = context;
   const waived = new Set(report.waived.map((w) => w.issueId));
   const out = await runFixer(ctx.agentContext(chapter.projectId, { chapterId }), {
     context,
-    issue,
-    otherIssues: report.issues.filter((i) => i.id !== issueId && !waived.has(i.id)),
+    issues,
+    otherIssues: report.issues.filter((i) => !fixing.has(i.id) && !waived.has(i.id)),
     scenes: scenes.map((e) => ({ summary: e.summary, beats: e.beatIds })),
     nextChapter: next?.plan ?? null,
   });
   return {
-    issueId,
+    issueIds: issues.map((i) => i.id),
     draftVersion: draft.version,
     explanation: out.explanation,
     edits: out.edits.map((e) => ({
@@ -513,6 +540,7 @@ export async function proposeFix(
       before: paragraphs[e.paragraph - 1]!,
       after: e.text,
     })),
+    skipped: out.skipped.map((sk) => ({ issueId: issues[sk.problem - 1]!.id, reason: sk.reason })),
     move:
       out.move && next
         ? {
@@ -574,18 +602,31 @@ export interface ApprovedFix {
  * takes their scenes out of this chapter's canon (so their facts are not committed at lock or
  * redrafted here), and adds a required beat to the next chapter's plan.
  */
-export async function applyFix(
+export function applyFix(
   ctx: ServiceContext,
   chapterId: string,
   issueId: string,
   approved: ApprovedFix,
 ) {
-  const { chapter, draft, issue } = await currentIssue(ctx, chapterId, issueId);
+  return applyFixes(ctx, chapterId, [issueId], approved);
+}
+
+/** Applies one approved revision for one or several issues: one new version, one re-check. */
+export async function applyFixes(
+  ctx: ServiceContext,
+  chapterId: string,
+  issueIds: string[],
+  approved: ApprovedFix,
+) {
+  const { chapter, draft, issues } = await currentIssues(ctx, chapterId, issueIds);
   if (approved.draftVersion !== draft.version) {
     throw new ConflictError('The draft changed after this fix was proposed; ask for a new one');
   }
   const count = draftParagraphs(draft.prose).length;
   const move = approved.move ?? null;
+  if (move && issues.length > 1) {
+    throw new GateError('Content can only move to the next chapter when fixing a single issue');
+  }
   const removed = new Set(move?.paragraphs ?? []);
   const edits = new Map<number, string>();
   for (const e of approved.edits) {
@@ -639,10 +680,13 @@ export async function applyFix(
   }
 
   const prose = replaceParagraphs(draft.prose, edits, removed);
-  const where = issue.paragraph > 0 ? `¶${issue.paragraph} ` : '';
+  const [first] = issues as [CohesionIssue];
+  const where = first.paragraph > 0 ? `¶${first.paragraph} ` : '';
   const notes = move
-    ? `Moved ¶${paragraphRanges([...removed].sort((a, b) => a - b))} to chapter ${toChapter} (${issue.category})`
-    : `Fixed ${where}(${issue.category})`;
+    ? `Moved ¶${paragraphRanges([...removed].sort((a, b) => a - b))} to chapter ${toChapter} (${first.category})`
+    : issues.length === 1
+      ? `Fixed ${where}(${first.category})`
+      : `Fixed ${issues.length} issues (${[...new Set(issues.map((i) => i.category))].join(', ')})`;
   const next = await inTransaction(ctx.db, async (repos) => {
     const created = await repos.drafts.create({
       projectId: chapter.projectId,

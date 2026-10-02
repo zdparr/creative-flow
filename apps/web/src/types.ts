@@ -282,10 +282,13 @@ export interface BookView {
 }
 
 export interface FixProposal {
-  issueId: string;
+  /** The issues the fix addresses: one, or several fixed together. */
+  issueIds: string[];
   draftVersion: number;
   explanation: string;
   edits: { paragraph: number; before: string; after: string }[];
+  /** Issues the AI could not fix by rewriting, with its reason. */
+  skipped: { issueId: string; reason: string }[];
   /** Content the fix moves to the next chapter, which gains a required beat for it. */
   move: {
     toChapter: number;
