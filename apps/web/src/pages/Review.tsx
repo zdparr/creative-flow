@@ -610,6 +610,19 @@ export function ReviewScreen({ projectId, chapterId }: { projectId: string; chap
           </p>
         )}
 
+        {reviewable && !older && draft && (
+          <div className="toolbar">
+            <button
+              className="quiet"
+              disabled={busy || !!working}
+              title="Adds interiority, consequence, and continuity to this draft without rewriting it, as a new version"
+              onClick={() => run(() => api('POST', `/chapters/${chapterId}/draft/deepen`))}
+            >
+              Deepen prose
+            </button>
+          </div>
+        )}
+
         {(reviewable || (chapter.status === 'drafting' && draft && !working)) && (
           <div className="card stack" ref={notesRef}>
             <TextField

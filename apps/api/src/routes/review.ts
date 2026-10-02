@@ -11,6 +11,7 @@ import {
   proposeFix,
   proposeFixes,
   recheckDraft,
+  requestDeepen,
   regenerateDraft,
   resolveDrift,
   unlockChapter,
@@ -75,6 +76,12 @@ export const reviewRoutes: FastifyPluginAsync<AppDeps> = async (app, deps) => {
   app.post<ChapterParams>('/chapters/:id/draft/regenerate', async (req) => {
     const chapter = await loadChapter(req);
     await regenerateDraft(services, chapter.id, notesBody.parse(req.body).notes);
+    return getReview(services, chapter.id);
+  });
+
+  app.post<ChapterParams>('/chapters/:id/draft/deepen', async (req) => {
+    const chapter = await loadChapter(req);
+    await requestDeepen(services, chapter.id);
     return getReview(services, chapter.id);
   });
 

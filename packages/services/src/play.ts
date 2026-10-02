@@ -19,7 +19,7 @@ import type { ChapterRow, CharacterRow, PlayTurn, Project } from '@storyforge/db
 import { toBibleContent } from './bible.js';
 import { cardsForChapter, ensureCast, listCharacters, registerNewCharacter } from './characters.js';
 import type { ServiceContext } from './context.js';
-import { requestNovelize } from './drafting.js';
+import { DRAFT_JOBS, requestNovelize } from './drafting.js';
 import { recordDrift } from './drift.js';
 import {
   commitmentsInForce,
@@ -473,10 +473,7 @@ export async function reopenChapter(ctx: ServiceContext, chapterId: string) {
   if (chapter.status !== 'drafting' && chapter.status !== 'review') {
     throw new ConflictError('Only a chapter in drafting or review can return to play');
   }
-  const job = await ctx.repos.jobs.latestForChapter(chapterId, [
-    'chapter.novelize',
-    'chapter.cohesion',
-  ]);
+  const job = await ctx.repos.jobs.latestForChapter(chapterId, DRAFT_JOBS);
   if (job && (job.status === 'queued' || job.status === 'running')) {
     throw new ConflictError('Wait for the draft to finish, then return to play from review');
   }

@@ -2,6 +2,7 @@ import type {
   CohesionIssue,
   DriftDetails,
   FactCorrection,
+  CommitmentGiven,
   CommitmentStatus,
   PlantedPromise,
   StoredCommitmentTest,
@@ -53,6 +54,7 @@ export function createCohesionRepo(db: Db) {
       checkpointsMet: { character: string; chapter: number }[];
       factCorrections?: FactCorrection[];
       commitmentsTested?: StoredCommitmentTest[];
+      commitmentsGiven?: CommitmentGiven[];
       jobId: string | null;
     }): Promise<CohesionReport> {
       const [row] = await db

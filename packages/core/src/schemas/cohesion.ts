@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { COMMITMENT_OUTCOMES, type CommitmentOutcome, PROMISE_TYPES } from '../domain/status.js';
+import { commitmentSchema } from './play.js';
 
 export const ISSUE_SEVERITIES = ['blocker', 'warning', 'note'] as const;
 export type IssueSeverity = (typeof ISSUE_SEVERITIES)[number];
@@ -75,10 +76,23 @@ export const criticOutputSchema = z.object({
     .describe(
       'Commitments in force that this draft puts under pressure (a character is pressed on, tempted to break, or acts on one); omit the rest',
     ),
+  commitmentsGiven: z
+    .array(
+      commitmentSchema.extend({
+        testedHere: z
+          .boolean()
+          .describe('True if this same draft also puts it under pressure after it is given'),
+      }),
+    )
+    .default([])
+    .describe(
+      'Secrets, instructions, promises, and warnings one character explicitly gives another in this draft that are not already listed in force; usually empty',
+    ),
   summary: z
     .string()
     .describe('A 300-500 word summary of the chapter as written, for later chapters to read'),
 });
+export type CommitmentGiven = CriticOutput['commitmentsGiven'][number];
 export type CommitmentTest = CriticOutput['commitmentsTested'][number];
 
 /** A commitment test as stored on a report: the registry id, or the content of one given this chapter. */

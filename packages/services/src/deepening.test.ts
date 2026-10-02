@@ -1,9 +1,18 @@
-import { type ExtractorOutput, draftParagraphs } from '@storyforge/core';
+import { ConflictError, type ExtractorOutput, draftParagraphs } from '@storyforge/core';
 import { sampleReplan, seedChapters } from '@storyforge/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getReview, lockChapter } from './drafting.js';
+import { editDraft, getReview, lockChapter, requestDeepen } from './drafting.js';
 import { endChapter, startChapter } from './play.js';
-import { type TestKit, createTestKit, recorder, runQueued, seededProject } from './testing.js';
+import { unlockChapter } from './replan.js';
+import {
+  type TestKit,
+  createTestKit,
+  draftSeedChapter,
+  recorder,
+  runQueued,
+  seededProject,
+  waiveAndLock,
+} from './testing.js';
 
 let kit: TestKit;
 afterEach(() => kit.close());
@@ -131,5 +140,68 @@ describe('deepening pass and commitments ledger', () => {
     const current = await kit.ctx.repos.drafts.current(chapters[0]!.id);
     expect(current!.prose).toBe(seedChapters[1].prose);
     expect(kit.queued.find((j) => j.type === 'chapter.cohesion')!.data.draftId).toBe(current!.id);
+  });
+
+  it('deepens chapters written before the pass, with what an author edit to an earlier one added', async () => {
+    kit = await createTestKit();
+    const { ctx } = kit;
+    const { project, chapters } = await seededProject(ctx);
+    const [c1, c2] = chapters as [(typeof chapters)[0], (typeof chapters)[0]];
+    for (const n of [1, 2] as const) {
+      await draftSeedChapter(kit, chapters[n - 1]!.id, n);
+      await waiveAndLock(kit, chapters[n - 1]!.id);
+    }
+    // A locked chapter cannot be deepened in place.
+    await expect(requestDeepen(ctx, c2.id)).rejects.toBeInstanceOf(ConflictError);
+
+    // The author unlocks chapter 1 and edits in an order play never recorded.
+    await unlockChapter(ctx, c1.id);
+    // Unlocking queues chapter 2's recheck first.
+    await runQueued(kit, 'chapter.cohesion', seedChapters[2].critic);
+    const order = 'Maren tells no one in Harrow about the letters.';
+    await editDraft(
+      ctx,
+      c1.id,
+      `${seedChapters[1].prose}
+
+"Tell no one in Harrow," Tomas had written. Not a word.`,
+    );
+    await runQueued(kit, 'chapter.cohesion', {
+      ...seedChapters[1].critic,
+      commitmentsGiven: [
+        {
+          kind: 'instruction',
+          from: 'Tomas Reyne',
+          to: ['Maren Tull'],
+          content: order,
+          scope: 'no one in Harrow',
+          words: 'Tell no one in Harrow.',
+          testedHere: false,
+        },
+      ],
+    });
+    await waiveAndLock(kit, c1.id);
+    expect(await ctx.repos.commitments.list(project.id)).toMatchObject([
+      { content: order, giver: 'Tomas Reyne', status: 'active' },
+    ]);
+
+    // Chapter 2 was flagged; once its recheck is in, the author deepens it.
+    expect((await getReview(ctx, c2.id)).chapter.status).toBe('needs_recheck');
+    await requestDeepen(ctx, c2.id);
+    await expect(requestDeepen(ctx, c2.id)).rejects.toBeInstanceOf(ConflictError);
+    expect((await getReview(ctx, c2.id)).job).toMatchObject({ stage: 'Deepening prose' });
+
+    const before = draftParagraphs(seedChapters[2].prose);
+    await runQueued(kit, 'chapter.deepen', {
+      pivotalMoments: [{ paragraph: 2, moment: 'the order' }],
+      edits: [{ paragraph: 2, text: `${before[1]} *Tell no one,* she remembered.` }],
+      inserts: [],
+    });
+    expect(userText('deepening editor')).toContain(order);
+    const current = await ctx.repos.drafts.current(c2.id);
+    expect(current!.prose).toContain('*Tell no one,* she remembered.');
+    expect(current!.notes).toMatch(/^Deepening pass/);
+    expect(kit.queued.find((j) => j.type === 'chapter.cohesion')!.data.draftId).toBe(current!.id);
+    expect((await getReview(ctx, c2.id)).chapter.status).toBe('needs_recheck');
   });
 });

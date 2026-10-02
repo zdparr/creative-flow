@@ -6,6 +6,7 @@ export const JOB_TYPES = [
   'outline.generate',
   'chapter.novelize',
   'chapter.cohesion',
+  'chapter.deepen',
   'outline.replan',
   'character.draftCard',
   'book.review',

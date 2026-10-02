@@ -3,6 +3,7 @@ import { createDb } from '@storyforge/db';
 import {
   type BookReviewJobInput,
   type CohesionJobInput,
+  type DeepenJobInput,
   type DraftCardJobInput,
   type ExportJobInput,
   type NovelizeJobInput,
@@ -10,6 +11,7 @@ import {
   type ReplanJobInput,
   checkCohesion,
   createServiceContext,
+  deepenChapter,
   draftCard,
   exportBook,
   generateOutline,
@@ -57,6 +59,7 @@ const processor = createProcessor(
     'character.draftCard': (jobId, data) => draftCard(services, jobId, data as DraftCardJobInput),
     'chapter.novelize': (jobId, data) => novelizeChapter(services, jobId, data as NovelizeJobInput),
     'chapter.cohesion': (jobId, data) => checkCohesion(services, jobId, data as CohesionJobInput),
+    'chapter.deepen': (jobId, data) => deepenChapter(services, jobId, data as DeepenJobInput),
     'outline.replan': (jobId, data) => replanOutline(services, jobId, data as ReplanJobInput),
     'book.review': (jobId, data) => reviewBook(services, jobId, data as BookReviewJobInput),
     'book.export': (jobId, data) => exportBook(services, jobId, data as ExportJobInput),

@@ -6,6 +6,7 @@ import {
   ConflictError,
   type CriticInput,
   type FactCorrection,
+  type JobType,
   GateError,
   NotFoundError,
   type NovelizerEvent,
@@ -31,6 +32,7 @@ import type { ServiceContext } from './context.js';
 import { requestReplan, reviseOutline } from './replan.js';
 import {
   type ChapterBasics,
+  asCommitments,
   type CommitmentInForce,
   chapterBasics,
   commitmentsInForce,
@@ -52,6 +54,9 @@ export interface CohesionJobInput {
 }
 
 // ---------- enqueueing ----------
+
+/** The jobs that write or check a chapter's draft; one at a time per chapter. */
+export const DRAFT_JOBS: JobType[] = ['chapter.novelize', 'chapter.deepen', 'chapter.cohesion'];
 
 export async function requestNovelize(ctx: ServiceContext, chapter: ChapterRow, notes?: string) {
   const input: NovelizeJobInput = {
@@ -114,41 +119,14 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
   const { chapter, project, bible, plan } = basics;
   if (chapter.status !== 'drafting') throw new ConflictError('This chapter is not being drafted');
 
-  const characters = await ensureCast(ctx, project.id, bible);
-  const [{ chronicle, cast }, turns, locations, chapters, current] = await Promise.all([
-    chapterCast(ctx, basics, characters),
-    ctx.repos.play.listTurns(chapter.id),
-    ctx.repos.characters.listLocations(project.id),
+  const { chronicle, events, cards, commitments } = await proseInputs(ctx, basics);
+  const [chapters, current] = await Promise.all([
     ctx.repos.chapters.listForProject(project.id),
     ctx.repos.drafts.current(chapter.id),
   ]);
-  if (chronicle.length === 0) throw new GateError('The chapter has no canon scenes to write from');
-  const nameOf = new Map(characters.map((c) => [c.id, c.name]));
-  const placeOf = new Map(locations.map((l) => [l.id, l.name]));
-  const turnById = new Map(turns.map((t) => [t.id, t]));
-  const pivotal = new Set(plan.requiredBeats.filter((b) => b.pivotal).map((b) => b.id));
-
-  const events: NovelizerEvent[] = chronicle.map((e) => ({
-    pivotal: e.beatIds.some((id) => pivotal.has(id)),
-    summary: e.summary,
-    characters: e.characters.map((id) => nameOf.get(id)).filter((n): n is string => !!n),
-    location: e.locationId ? (placeOf.get(e.locationId) ?? null) : null,
-    interiorityNote: e.interiorityNote,
-    authorNote: e.extracted.authorNote ?? null,
-    dialogue: e.turnIds.flatMap((id) => {
-      const turn = turnById.get(id);
-      if (!turn || turn.inputKind === 'author_note') return [];
-      return keyDialogue(turn.content);
-    }),
-  }));
-
   const previous = chapters.find((c) => c.number === chapter.number - 1);
   const previousDraft = previous ? await ctx.repos.drafts.current(previous.id) : null;
   const agent = ctx.agentContext(project.id, { jobId, chapterId: chapter.id });
-  const [cards, commitments] = await Promise.all([
-    cardsForChapter(ctx, project.id, cast, chapter.number),
-    chapterCommitments(ctx, basics, chronicle, characters, cast),
-  ]);
   const { prose } = await runNovelizer(agent, {
     bible,
     chapterNumber: chapter.number,
@@ -199,9 +177,104 @@ export async function novelizeChapter(ctx: ServiceContext, jobId: string, input:
   return draft.id;
 }
 
+/** What the prose agents write from: the canon chronicle as events, the cards, and commitments. */
+async function proseInputs(ctx: ServiceContext, basics: ChapterBasics) {
+  const { chapter, project, bible, plan } = basics;
+  const characters = await ensureCast(ctx, project.id, bible);
+  const [{ chronicle, cast }, turns, locations] = await Promise.all([
+    chapterCast(ctx, basics, characters),
+    ctx.repos.play.listTurns(chapter.id),
+    ctx.repos.characters.listLocations(project.id),
+  ]);
+  if (chronicle.length === 0) throw new GateError('The chapter has no canon scenes to write from');
+  const nameOf = new Map(characters.map((c) => [c.id, c.name]));
+  const placeOf = new Map(locations.map((l) => [l.id, l.name]));
+  const turnById = new Map(turns.map((t) => [t.id, t]));
+  const pivotal = new Set(plan.requiredBeats.filter((b) => b.pivotal).map((b) => b.id));
+
+  const events: NovelizerEvent[] = chronicle.map((e) => ({
+    pivotal: e.beatIds.some((id) => pivotal.has(id)),
+    summary: e.summary,
+    characters: e.characters.map((id) => nameOf.get(id)).filter((n): n is string => !!n),
+    location: e.locationId ? (placeOf.get(e.locationId) ?? null) : null,
+    interiorityNote: e.interiorityNote,
+    authorNote: e.extracted.authorNote ?? null,
+    dialogue: e.turnIds.flatMap((id) => {
+      const turn = turnById.get(id);
+      if (!turn || turn.inputKind === 'author_note') return [];
+      return keyDialogue(turn.content);
+    }),
+  }));
+  const [cards, commitments] = await Promise.all([
+    cardsForChapter(ctx, project.id, cast, chapter.number),
+    chapterCommitments(ctx, basics, chronicle, characters, cast),
+  ]);
+  return { chronicle, events, cards, commitments };
+}
+
+// ---------- chapter.deepen ----------
+
+export interface DeepenJobInput {
+  projectId: string;
+  chapterId: string;
+}
+
+/**
+ * Runs the deepening pass on a chapter already in review, such as one written before the pass
+ * existed or flagged for a recheck. The result is a new version, which then gets checked.
+ */
+export async function requestDeepen(ctx: ServiceContext, chapterId: string) {
+  const chapter = await ctx.repos.chapters.get(chapterId);
+  if (!chapter) throw new NotFoundError('Chapter');
+  assertReviewable(chapter);
+  const [draft, job] = await Promise.all([
+    ctx.repos.drafts.current(chapterId),
+    ctx.repos.jobs.latestForChapter(chapterId, DRAFT_JOBS),
+  ]);
+  if (!draft) throw new NotFoundError('Draft');
+  if (job && (job.status === 'queued' || job.status === 'running')) {
+    throw new ConflictError('Wait for the current job to finish');
+  }
+  const input: DeepenJobInput = { projectId: chapter.projectId, chapterId };
+  const created = await ctx.repos.jobs.create(chapter.projectId, 'chapter.deepen', { ...input });
+  await ctx.enqueue({ id: created.id, type: 'chapter.deepen', data: { ...input } });
+  return created;
+}
+
+/** The chapter.deepen job: a deepened version of the current draft, then the check. */
+export async function deepenChapter(ctx: ServiceContext, jobId: string, input: DeepenJobInput) {
+  const basics = await chapterBasics(ctx, input.chapterId);
+  const { chapter, project, bible, plan } = basics;
+  assertReviewable(chapter);
+  const current = await ctx.repos.drafts.current(chapter.id);
+  if (!current) throw new NotFoundError('Draft');
+  const { chronicle, events, cards, commitments } = await proseInputs(ctx, basics);
+  const deep = await runDeepener(ctx.agentContext(project.id, { jobId, chapterId: chapter.id }), {
+    bible,
+    chapterNumber: chapter.number,
+    plan,
+    events,
+    cards,
+    commitments,
+    threads: await chapterThreads(ctx, basics, chronicle),
+    prose: current.prose,
+  });
+  const draft = await ctx.repos.drafts.create({
+    projectId: project.id,
+    chapterId: chapter.id,
+    prose: deep.prose,
+    wordCount: wordCount(deep.prose),
+    notes: `Deepening pass (+${Math.round(deep.retention.growth * 100)}%)`,
+    jobId,
+  });
+  await requestCohesion(ctx, chapter, draft.id);
+  return draft.id;
+}
+
 /**
  * Secrets and instructions in force for the chapter's cast: those committed in earlier chapters
- * that involve someone in it, and those given during this chapter's play.
+ * that involve someone in it, any this chapter committed at an earlier lock, and those given
+ * during its play.
  */
 async function chapterCommitments(
   ctx: ServiceContext,
@@ -212,12 +285,19 @@ async function chapterCommitments(
 ): Promise<CommitmentInForce[]> {
   const { chapter, project } = basics;
   const castIds = new Set(cast.map((c) => c.id));
-  const earlier = filterByEntities(
-    await commitmentsInForce(ctx, project.id, chapter.number),
+  // Through this chapter, so a relocked chapter keeps what its earlier lock committed.
+  const committed = filterByEntities(
+    await commitmentsInForce(ctx, project.id, chapter.number + 1),
     castIds,
     false,
   );
-  return [...earlier, ...pendingCommitments(ctx, chapter.number, chronicle, characters)];
+  const known = new Set(committed.map((c) => c.content.trim().toLowerCase()));
+  return [
+    ...committed,
+    ...pendingCommitments(ctx, chapter.number, chronicle, characters).filter(
+      (c) => !known.has(c.content.trim().toLowerCase()),
+    ),
+  ];
 }
 
 /** Open mysteries and setups the chapter can close on: open promises and this chapter's plants. */
@@ -346,6 +426,7 @@ export async function checkCohesion(ctx: ServiceContext, jobId: string, input: C
     plantedPromises: out.promisesPlanted,
     checkpointsMet: out.checkpointsMet,
     factCorrections,
+    commitmentsGiven: out.commitmentsGiven,
     commitmentsTested: out.commitmentsTested.flatMap((t) => {
       const c = commitments[Number(t.ref.slice(1)) - 1];
       return c ? [{ commitmentId: c.id, content: c.content, outcome: t.outcome }] : [];
@@ -380,6 +461,7 @@ function carryWaivers(
 const STAGES: Record<string, string> = {
   'chapter.novelize': 'Drafting prose',
   'chapter.cohesion': 'Checking cohesion',
+  'chapter.deepen': 'Deepening prose',
 };
 
 /** Everything the Review screen shows: the draft, its report, the gates, and job progress. */
@@ -389,7 +471,7 @@ export async function getReview(ctx: ServiceContext, chapterId: string) {
     ctx.repos.drafts.current(chapterId),
     ctx.repos.drafts.list(chapterId),
     ctx.repos.cohesion.latestForChapter(chapterId),
-    ctx.repos.jobs.latestForChapter(chapterId, ['chapter.novelize', 'chapter.cohesion']),
+    ctx.repos.jobs.latestForChapter(chapterId, DRAFT_JOBS),
     unapprovedCharactersIn(ctx, project.id, chapterId),
   ]);
   const reportCurrent = !!report && !!draft && report.draftId === draft.id;
@@ -474,10 +556,7 @@ export async function regenerateDraft(ctx: ServiceContext, chapterId: string, no
   const chapter = await ctx.repos.chapters.get(chapterId);
   if (!chapter) throw new NotFoundError('Chapter');
   if (chapter.status === 'drafting') {
-    const job = await ctx.repos.jobs.latestForChapter(chapterId, [
-      'chapter.novelize',
-      'chapter.cohesion',
-    ]);
+    const job = await ctx.repos.jobs.latestForChapter(chapterId, DRAFT_JOBS);
     if (job && (job.status === 'queued' || job.status === 'running')) {
       throw new ConflictError('A draft is already being written');
     }
@@ -907,17 +986,30 @@ export async function lockChapter(ctx: ServiceContext, chapterId: string) {
     // Commitments given in this chapter's play enter the ledger, with any test the draft made of
     // them; earlier ones the draft tested record it. A re-lock does not add them twice.
     const tests = report!.commitmentsTested;
+    const given = report!.commitmentsGiven;
+    const tested = new Set(
+      given.filter((g) => g.testedHere).map((g) => g.content.trim().toLowerCase()),
+    );
     const committed = new Set(
       existingCommitments
         .filter((c) => c.chapterId === chapterId)
         .map((c) => c.content.trim().toLowerCase()),
     );
-    for (const c of pendingCommitments(ctx, N, chronicle, characters)) {
+    const candidates = asCommitments(
+      ctx,
+      N,
+      [
+        ...chronicle.filter((e) => e.isCanon).flatMap((e) => e.extracted.commitments ?? []),
+        ...given,
+      ],
+      characters,
+    );
+    for (const c of candidates) {
       const key = c.content.trim().toLowerCase();
       if (committed.has(key)) continue;
-      const test = tests.find(
-        (t) => t.commitmentId === null && t.content.trim().toLowerCase() === key,
-      );
+      const test =
+        tests.find((t) => t.commitmentId === null && t.content.trim().toLowerCase() === key) ??
+        (tested.has(key) ? { outcome: 'kept' as const } : undefined);
       await repos.commitments.add({
         projectId: project.id,
         chapterId,

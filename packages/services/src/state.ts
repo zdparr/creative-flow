@@ -1,6 +1,7 @@
 import {
   type BibleContent,
   type ChronicleExtraction,
+  type Commitment,
   type ContextCommitment,
   type ContextFact,
   type ContextPromise,
@@ -155,11 +156,24 @@ export function pendingCommitments(
   chronicle: { isCanon: boolean; extracted: ChronicleExtraction }[],
   characters: CharacterRow[],
 ): CommitmentInForce[] {
+  return asCommitments(
+    ctx,
+    chapterNumber,
+    chronicle.filter((e) => e.isCanon).flatMap((e) => e.extracted.commitments ?? []),
+    characters,
+  );
+}
+
+/** Recorded commitments (from play or the critic) as context, one per content. */
+export function asCommitments(
+  ctx: ServiceContext,
+  chapterNumber: number,
+  list: Commitment[],
+  characters: CharacterRow[],
+): CommitmentInForce[] {
   const seen = new Set<string>();
   const idOf = (name: string) => ctx.repos.characters.findByName(characters, name)?.id;
-  return chronicle
-    .filter((e) => e.isCanon)
-    .flatMap((e) => e.extracted.commitments ?? [])
+  return list
     .filter((c) => {
       const key = c.content.trim().toLowerCase();
       if (!key || seen.has(key)) return false;

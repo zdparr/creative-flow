@@ -15,7 +15,14 @@ import { createTestDb } from '@storyforge/db/testing';
 import { exportBook, reviewBook } from './book.js';
 import { approveCharacter, draftCard, editCharacter, ensureCast } from './characters.js';
 import { type Enqueue, type ServiceContext, createServiceContext } from './context.js';
-import { checkCohesion, getReview, lockChapter, novelizeChapter, waiveIssue } from './drafting.js';
+import {
+  checkCohesion,
+  deepenChapter,
+  getReview,
+  lockChapter,
+  novelizeChapter,
+  waiveIssue,
+} from './drafting.js';
 import { type PlaySink, endChapter, startChapter } from './play.js';
 import { replanOutline } from './replan.js';
 
@@ -107,6 +114,7 @@ const RUNNERS: Partial<Record<string, JobRunner>> = {
   'character.draftCard': draftCard,
   'chapter.novelize': novelizeChapter,
   'chapter.cohesion': checkCohesion,
+  'chapter.deepen': deepenChapter,
   'outline.replan': replanOutline,
   'book.review': reviewBook,
   'book.export': exportBook,

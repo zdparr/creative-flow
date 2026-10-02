@@ -4,6 +4,7 @@ import {
   type ChapterPromises,
   type ChronicleExtraction,
   type CohesionIssue,
+  type CommitmentGiven,
   type CommitmentStatus,
   type DriftDetails,
   type FactCorrection,
@@ -298,6 +299,8 @@ export const cohesionReports = pgTable('cohesion_reports', {
     .$type<StoredCommitmentTest[]>()
     .notNull()
     .default([]),
+  // Commitments the draft itself establishes (an author's edit may add ones play never recorded).
+  commitmentsGiven: jsonb('commitments_given').$type<CommitmentGiven[]>().notNull().default([]),
   jobId: uuid('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   ...timestamps(),
 });
